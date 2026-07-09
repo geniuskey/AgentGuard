@@ -7,11 +7,14 @@
 //!
 //! See `docs/architecture.md` (module responsibilities) and `docs/policy-model.md`.
 
+pub mod backup;
 pub mod db;
 pub mod effective;
+pub mod fs_scan;
 pub mod model;
 pub mod paths;
 pub mod policy;
+pub mod profiles;
 pub mod risk;
 pub mod settings;
 

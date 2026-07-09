@@ -15,6 +15,13 @@ pub fn app_data_dir() -> crate::Result<PathBuf> {
     Ok(base.config_dir().join(APP_DIR_NAME))
 }
 
+/// The current user's home directory (for resolving `~/.claude/settings.json`).
+pub fn home_dir() -> crate::Result<PathBuf> {
+    let base = directories::BaseDirs::new()
+        .ok_or_else(|| crate::Error::Other("cannot resolve home directory".into()))?;
+    Ok(base.home_dir().to_path_buf())
+}
+
 /// Ensure the app-data dir and `backups/` subdir exist; return the app-data dir.
 pub fn ensure_app_data_dir() -> crate::Result<PathBuf> {
     let dir = app_data_dir()?;

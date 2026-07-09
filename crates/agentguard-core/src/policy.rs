@@ -6,10 +6,11 @@
 //! sections 4 (fan-out) and 5 (fold).
 
 use crate::model::{AppliesTo, Policy, PolicyRule, Tool, FILE_ACCESS_TOOLS};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The three permission arrays of a Claude Code `settings.json`.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permissions {
     pub allow: Vec<String>,
     pub ask: Vec<String>,
@@ -18,7 +19,7 @@ pub struct Permissions {
 
 /// Rules that could not be interpreted as path rules (e.g. `Bash(...)`, `WebFetch(...)`,
 /// or unparseable strings). Preserved verbatim on round-trip (D5).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnmanagedRules {
     pub allow: Vec<String>,
     pub ask: Vec<String>,

@@ -3,34 +3,47 @@
 
 mod commands;
 
-/// Ensure the app-data dir exists and the SQLite schema is initialized.
-/// Failures are logged but do not abort startup (the window still opens).
-fn bootstrap_storage() {
-    match agentguard_core::paths::ensure_app_data_dir() {
-        Ok(dir) => {
-            eprintln!("[agentguard] data dir: {}", dir.display());
-            match agentguard_core::paths::db_path().and_then(|p| agentguard_core::db::open(&p)) {
-                Ok(_) => eprintln!(
-                    "[agentguard] db ready (schema v{})",
-                    agentguard_core::db::SCHEMA_VERSION
-                ),
-                Err(e) => eprintln!("[agentguard] db init failed: {e}"),
-            }
-        }
-        Err(e) => eprintln!("[agentguard] could not create data dir: {e}"),
-    }
+use commands::Db;
+use std::sync::Mutex;
+
+/// Ensure the app-data dir exists and open the SQLite database with the schema
+/// initialized. Returns the connection to be held in Tauri state.
+fn open_database() -> agentguard_core::Result<rusqlite::Connection> {
+    let dir = agentguard_core::paths::ensure_app_data_dir()?;
+    eprintln!("[agentguard] data dir: {}", dir.display());
+    let db_path = agentguard_core::paths::db_path()?;
+    let conn = agentguard_core::db::open(&db_path)?;
+    eprintln!(
+        "[agentguard] db ready (schema v{})",
+        agentguard_core::db::SCHEMA_VERSION
+    );
+    Ok(conn)
 }
 
 fn main() {
+    // If storage bootstrap fails we still open the window with an in-memory DB so
+    // the app is usable and the error is visible, rather than crashing on launch.
+    let conn = open_database().unwrap_or_else(|e| {
+        eprintln!("[agentguard] storage bootstrap failed: {e}; using in-memory db");
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        let _ = agentguard_core::db::init(&conn);
+        conn
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|_app| {
-            bootstrap_storage();
-            Ok(())
-        })
+        .manage(Db(Mutex::new(conn)))
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
-            commands::list_recent_projects
+            commands::open_project,
+            commands::list_dir,
+            commands::load_settings,
+            commands::compute_effective,
+            commands::effective_for,
+            commands::to_settings_preview,
+            commands::build_diff,
+            commands::save_settings,
+            commands::list_recent_projects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agent Guard");
