@@ -2,13 +2,20 @@
   import { toSettingsPreview, type Permissions } from '$lib/ipc';
   import { app } from '$lib/state.svelte';
 
-  type Tab = 'allowed' | 'denied' | 'ask' | 'conflicts' | 'raw';
+  type Tab = 'allowed' | 'denied' | 'ask' | 'conflicts' | 'byscope' | 'raw';
   let tab = $state<Tab>('allowed');
 
   const allowed = $derived(app.effective.filter((e) => e.effective === 'allow'));
   const denied = $derived(app.effective.filter((e) => e.effective === 'deny'));
   const asked = $derived(app.effective.filter((e) => e.effective === 'ask'));
   const conflicts = $derived(app.effective.filter((e) => e.conflict));
+  const byScope = $derived(
+    (['user', 'project', 'local'] as const).map((s) => ({
+      scope: s,
+      rules: app.scoped[s].rules,
+      defaultMode: app.scoped[s].defaultMode
+    }))
+  );
 
   let raw = $state<Permissions | null>(null);
   // Recompute raw rules for the active scope whenever we switch to the Raw tab.
@@ -23,6 +30,7 @@
     { id: 'denied', label: 'Denied' },
     { id: 'ask', label: 'Ask' },
     { id: 'conflicts', label: 'Conflicts' },
+    { id: 'byscope', label: 'By Scope' },
     { id: 'raw', label: 'Raw Rules' }
   ];
 </script>
@@ -46,6 +54,17 @@
       {#each asked as e (e.path)}<div class="row"><span class="i">❓</span>{e.path}</div>{:else}<p class="muted">없음</p>{/each}
     {:else if tab === 'conflicts'}
       {#each conflicts as e (e.path)}<div class="row conflict"><span class="i">⚠️</span>{e.path} → {e.effective.toUpperCase()} <span class="src">deny 우선</span></div>{:else}<p class="muted">충돌 없음</p>{/each}
+    {:else if tab === 'byscope'}
+      {#each byScope as g (g.scope)}
+        <div class="scope-group">
+          <b>{g.scope}{#if g.defaultMode} · defaultMode={g.defaultMode}{/if}</b>
+          {#each g.rules as r (r.path + r.policy)}
+            <div class="row"><span class="i i-{r.policy}">{r.policy[0].toUpperCase()}</span>{r.path}</div>
+          {:else}
+            <p class="muted">규칙 없음</p>
+          {/each}
+        </div>
+      {/each}
     {:else if tab === 'raw'}
       {#if raw}
         <div class="raw-group"><b>allow</b>{#each raw.allow as r}<code>{r}</code>{/each}</div>
@@ -78,4 +97,7 @@
   .raw-group b { color: #94a3b8; font-size: 0.75rem; }
   code { background: #0b1220; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.75rem; }
   .note { color: #475569; font-size: 0.72rem; }
+  .scope-group { margin-bottom: 0.7rem; }
+  .scope-group b { color: #94a3b8; font-size: 0.75rem; text-transform: capitalize; }
+  .i-allow { color: #4ade80; } .i-deny { color: #f87171; } .i-ask { color: #fbbf24; }
 </style>

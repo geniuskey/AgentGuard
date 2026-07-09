@@ -189,3 +189,111 @@ export async function saveSettings(args: {
     projectName: args.projectName
   });
 }
+
+// --- Iteration 2+ -----------------------------------------------------------
+
+export interface BackupRecord {
+  id: string;
+  projectId: string | null;
+  scope: string;
+  originalPath: string;
+  backupPath: string;
+  createdAt: string;
+}
+
+export interface EnvVar {
+  name: string;
+  present: boolean;
+  display: string;
+  isSecret: boolean;
+}
+
+export interface EnvStatus {
+  vars: EnvVar[];
+  hasSecretInEnv: boolean;
+  usesProfile: boolean;
+}
+
+export interface GitignoreStatus {
+  exists: boolean;
+  ignored: boolean;
+}
+
+export interface ProfilePlan {
+  defaultMode: string | null;
+  rules: PolicyRule[];
+}
+
+export async function readRawSettings(projectRoot: string, scope: ScopeName): Promise<string> {
+  return invoke<string>('read_raw_settings', { projectRoot, scope });
+}
+
+export async function saveRawSettings(args: {
+  projectRoot: string;
+  projectId: string;
+  scope: ScopeName;
+  text: string;
+  projectName: string;
+}): Promise<SaveResult> {
+  return invoke<SaveResult>('save_raw_settings', {
+    projectRoot: args.projectRoot,
+    projectId: args.projectId,
+    scope: args.scope,
+    text: args.text,
+    timestamp: backupTimestamp(),
+    projectName: args.projectName
+  });
+}
+
+export async function validateJson(text: string): Promise<string | null> {
+  return invoke<string | null>('validate_json', { text });
+}
+
+export async function listBackups(projectId: string): Promise<BackupRecord[]> {
+  return invoke<BackupRecord[]>('list_backups', { projectId });
+}
+
+export async function previewBackup(backupPath: string): Promise<string> {
+  return invoke<string>('preview_backup', { backupPath });
+}
+
+export async function restoreBackup(backupPath: string, targetPath: string): Promise<void> {
+  return invoke<void>('restore_backup', {
+    backupPath,
+    targetPath,
+    timestamp: backupTimestamp()
+  });
+}
+
+export async function scanRecommendationRules(projectRoot: string): Promise<PolicyRule[]> {
+  return invoke<PolicyRule[]>('scan_recommendation_rules', { projectRoot });
+}
+
+export async function applyProfile(projectRoot: string, profile: string): Promise<ProfilePlan> {
+  return invoke<ProfilePlan>('apply_profile', { projectRoot, profile });
+}
+
+export async function getEnvStatus(): Promise<EnvStatus> {
+  if (!inTauri()) {
+    return { vars: [], hasSecretInEnv: false, usesProfile: false };
+  }
+  return invoke<EnvStatus>('get_env_status');
+}
+
+export async function gitignoreStatus(projectRoot: string): Promise<GitignoreStatus> {
+  return invoke<GitignoreStatus>('gitignore_status', { projectRoot });
+}
+
+export async function addLocalToGitignore(projectRoot: string): Promise<boolean> {
+  return invoke<boolean>('add_local_to_gitignore', { projectRoot });
+}
+
+export async function policyReport(args: {
+  projectName: string;
+  profile: string | null;
+  scoped: ScopedRulesDto;
+  riskScore: number;
+  riskLevel: string;
+}): Promise<string> {
+  return invoke<string>('policy_report', args);
+}

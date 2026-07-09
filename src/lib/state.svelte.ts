@@ -77,6 +77,18 @@ export function setDefaultMode(scope: ScopeName, mode: string | null) {
   app.dirty = true;
 }
 
+/** Merge a batch of rules into a scope (upsert by path), optionally set defaultMode. */
+export function mergeRules(scope: ScopeName, rules: PolicyRule[], defaultMode?: string | null) {
+  const bucket = app.scoped[scope];
+  for (const rule of rules) {
+    const idx = bucket.rules.findIndex((r) => r.path === rule.path);
+    if (idx >= 0) bucket.rules[idx] = rule;
+    else bucket.rules.push(rule);
+  }
+  if (defaultMode !== undefined) bucket.defaultMode = defaultMode;
+  app.dirty = true;
+}
+
 export async function refreshEffective() {
   app.effective = await computeEffective(app.scoped);
 }

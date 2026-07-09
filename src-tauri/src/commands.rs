@@ -279,7 +279,7 @@ pub fn save_settings(
     // Write atomically.
     backup::atomic_write(&file, &after).map_err(|e| e.to_string())?;
 
-    // Persist rule metadata to DB.
+    // Persist rule metadata + backup record to DB.
     {
         let mut conn = state.0.lock().map_err(|e| e.to_string())?;
         db::save_project_paths(
@@ -290,6 +290,17 @@ pub fn save_settings(
             &timestamp,
         )
         .map_err(|e| e.to_string())?;
+        if let Some(bp) = &backup_path {
+            db::record_backup(
+                &conn,
+                Some(&project_id),
+                scope,
+                &file.to_string_lossy(),
+                &bp.to_string_lossy(),
+                &timestamp,
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(SaveResult {
@@ -302,4 +313,184 @@ pub fn save_settings(
 pub fn list_recent_projects(state: State<Db>) -> Result<Vec<ProjectRecord>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::list_recent_projects(&conn, 20).map_err(|e| e.to_string())
+}
+
+// --- Iteration 2+: Raw JSON, backups, scanner apply, env, gitignore, report ---
+
+/// Read the raw settings text for a scope (empty string if the file doesn't exist).
+#[tauri::command]
+pub fn read_raw_settings(project_root: String, scope: Scope) -> Result<String, String> {
+    let file = scope_file(Path::new(&project_root), scope)?;
+    Ok(std::fs::read_to_string(&file).unwrap_or_default())
+}
+
+/// Save raw settings text after validating it as JSON (never writes invalid JSON).
+/// Backs up the existing file first (req §8.8, §9.4).
+#[tauri::command]
+pub fn save_raw_settings(
+    state: State<Db>,
+    project_root: String,
+    project_id: String,
+    scope: Scope,
+    text: String,
+    timestamp: String,
+    project_name: String,
+) -> Result<SaveResult, String> {
+    // Validate structure before touching disk.
+    settings::parse(scope, &text).map_err(|e| e.to_string())?;
+    let file = scope_file(Path::new(&project_root), scope)?;
+
+    let backups = paths::backups_dir().map_err(|e| e.to_string())?;
+    let scope_label = match scope {
+        Scope::User => "user-settings",
+        Scope::Project => "project-settings",
+        Scope::Local => "local-settings",
+    };
+    let proj = if scope == Scope::User {
+        None
+    } else {
+        Some(project_name.as_str())
+    };
+    let name = backup::backup_filename(&timestamp, proj, scope_label);
+    let backup_path = backup::backup(&file, &backups, &name).map_err(|e| e.to_string())?;
+    backup::atomic_write(&file, &text).map_err(|e| e.to_string())?;
+
+    if let Some(bp) = &backup_path {
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::record_backup(
+            &conn,
+            Some(&project_id),
+            scope,
+            &file.to_string_lossy(),
+            &bp.to_string_lossy(),
+            &timestamp,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(SaveResult {
+        written: file.to_string_lossy().to_string(),
+        backup: backup_path.map(|p| p.to_string_lossy().to_string()),
+    })
+}
+
+/// Validate JSON text; returns an error message string, or null when valid.
+#[tauri::command]
+pub fn validate_json(text: String) -> Result<Option<String>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(_) => Ok(None),
+        Err(e) => Ok(Some(e.to_string())),
+    }
+}
+
+#[tauri::command]
+pub fn list_backups(state: State<Db>, project_id: String) -> Result<Vec<db::BackupRecord>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::list_backups(&conn, &project_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn preview_backup(backup_path: String) -> Result<String, String> {
+    std::fs::read_to_string(&backup_path).map_err(|e| e.to_string())
+}
+
+/// Restore a backup onto its original path (backs up current state first).
+#[tauri::command]
+pub fn restore_backup(
+    backup_path: String,
+    target_path: String,
+    timestamp: String,
+) -> Result<(), String> {
+    let target = PathBuf::from(&target_path);
+    let backups = paths::backups_dir().map_err(|e| e.to_string())?;
+    let name = format!("{timestamp}_pre-restore.json");
+    backup::backup(&target, &backups, &name).map_err(|e| e.to_string())?;
+    backup::restore(Path::new(&backup_path), &target).map_err(|e| e.to_string())
+}
+
+/// Turn scanner recommendations into neutral rules (Deny for sensitive, Allow for source).
+#[tauri::command]
+pub fn scan_recommendation_rules(project_root: String) -> Result<Vec<PolicyRule>, String> {
+    let scan = fs_scan::scan(Path::new(&project_root)).map_err(|e| e.to_string())?;
+    Ok(agentguard_core::profiles::baseline_rules(
+        agentguard_core::profiles::Profile::Conservative,
+        &scan,
+    ))
+}
+
+/// Baseline rules for a named profile (applied after user confirms in the Diff).
+#[tauri::command]
+pub fn apply_profile(project_root: String, profile: String) -> Result<ProfilePlan, String> {
+    let scan = fs_scan::scan(Path::new(&project_root)).map_err(|e| e.to_string())?;
+    let p = match profile.as_str() {
+        "conservative" => agentguard_core::profiles::Profile::Conservative,
+        "balanced" => agentguard_core::profiles::Profile::Balanced,
+        "fast-dev" => agentguard_core::profiles::Profile::FastDev,
+        _ => agentguard_core::profiles::Profile::Custom,
+    };
+    Ok(ProfilePlan {
+        default_mode: p.default_mode().map(|s| s.to_string()),
+        rules: agentguard_core::profiles::baseline_rules(p, &scan),
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfilePlan {
+    pub default_mode: Option<String>,
+    pub rules: Vec<PolicyRule>,
+}
+
+#[tauri::command]
+pub fn get_env_status() -> Result<agentguard_core::env::EnvStatus, String> {
+    Ok(agentguard_core::env::status())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitignoreStatus {
+    pub exists: bool,
+    pub ignored: bool,
+}
+
+#[tauri::command]
+pub fn gitignore_status(project_root: String) -> Result<GitignoreStatus, String> {
+    let (exists, ignored) = agentguard_core::gitignore::status(Path::new(&project_root));
+    Ok(GitignoreStatus { exists, ignored })
+}
+
+#[tauri::command]
+pub fn add_local_to_gitignore(project_root: String) -> Result<bool, String> {
+    agentguard_core::gitignore::add_local_settings_entry(Path::new(&project_root))
+        .map_err(|e| e.to_string())
+}
+
+/// Generate a Markdown policy report for the current effective policy.
+#[tauri::command]
+pub fn policy_report(
+    project_name: String,
+    profile: Option<String>,
+    scoped: ScopedRulesDto,
+    risk_score: u32,
+    risk_level: String,
+) -> Result<String, String> {
+    let effective = effective::compute_all(&scoped.to_core());
+    let level = match risk_level.to_lowercase().as_str() {
+        "high" => agentguard_core::model::RiskLevel::High,
+        "medium" => agentguard_core::model::RiskLevel::Medium,
+        _ => agentguard_core::model::RiskLevel::Low,
+    };
+    let risk = RiskScore {
+        score: risk_score,
+        level,
+    };
+    Ok(agentguard_core::report::markdown(
+        &project_name,
+        profile.as_deref(),
+        &risk,
+        &effective,
+    ))
 }

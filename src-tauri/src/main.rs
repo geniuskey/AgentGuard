@@ -44,6 +44,18 @@ fn main() {
             commands::build_diff,
             commands::save_settings,
             commands::list_recent_projects,
+            commands::read_raw_settings,
+            commands::save_raw_settings,
+            commands::validate_json,
+            commands::list_backups,
+            commands::preview_backup,
+            commands::restore_backup,
+            commands::scan_recommendation_rules,
+            commands::apply_profile,
+            commands::get_env_status,
+            commands::gitignore_status,
+            commands::add_local_to_gitignore,
+            commands::policy_report,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agent Guard");

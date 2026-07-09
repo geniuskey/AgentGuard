@@ -10,11 +10,14 @@
 pub mod backup;
 pub mod db;
 pub mod effective;
+pub mod env;
 pub mod fs_scan;
+pub mod gitignore;
 pub mod model;
 pub mod paths;
 pub mod policy;
 pub mod profiles;
+pub mod report;
 pub mod risk;
 pub mod settings;
 

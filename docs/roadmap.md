@@ -6,6 +6,26 @@
 
 ---
 
+## 구현 현황 (2026-07-09)
+
+| Iteration | 상태 | 비고 |
+|---|---|---|
+| 0 스캐폴딩 | ✅ 완료 | workspace + core + Tauri 셸 + SvelteKit |
+| 1 3대 가치 슬라이스 | ✅ 완료 | 탐색기 편집·Effective Preview·리스크 기억 |
+| 2 Preview/Diff/Raw JSON | ✅ 완료 | Raw JSON(경량 에디터)·By Scope·Conflicts·백업 복원·스캐너 적용·검색 |
+| 3 프로필/스캐너 | ✅ 완료 | 프로필 셀렉터·추천 일괄 적용 |
+| 4 Should-have | ✅ 완료 | Bedrock/Env 화면·gitignore 추천 |
+| 5 패키징 | 🟡 부분 | 아이콘 세트·번들 설정 완료. MSI/NSIS 빌드·서명은 Windows+정책(#4/#5) |
+| Could-have | 🟡 일부 | Markdown 리포트 완료. Dark mode/단축키/Import·Export는 후속 |
+
+> **Monaco 노트**: Raw JSON 탭은 현재 경량 textarea 에디터(validate/format/save 완비)다.
+> 문서상 선택지인 Monaco는 헤드리스 환경에서 렌더링 검증 불가 + CSP `worker-src` 튜닝이
+> 필요해, 실제 창(Windows)에서 붙이는 시각 폴리시 항목으로 보류한다. 기능 계약은 충족.
+> **검증**: 모든 핵심 로직은 `cargo test --workspace`(35 tests) + 프론트 `npm run build/check`로
+> 이 컨테이너에서 검증. Tauri 창 실행만 Windows `npm run tauri dev`.
+
+---
+
 ## Iteration 0 — 스캐폴딩 (선행)
 
 - 스택 확정됨: **Tauri 2 + SvelteKit(Svelte 5, adapter-static) + Rust + SQLite + Monaco** (tech-stack.md).

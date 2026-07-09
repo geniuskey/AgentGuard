@@ -272,6 +272,64 @@ pub fn load_project_paths(
     Ok(out)
 }
 
+// --- backups ------------------------------------------------------------------
+
+/// A row of the `backups` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupRecord {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub scope: String,
+    pub original_path: String,
+    pub backup_path: String,
+    pub created_at: String,
+}
+
+/// Record a created backup.
+#[allow(clippy::too_many_arguments)]
+pub fn record_backup(
+    conn: &Connection,
+    project_id: Option<&str>,
+    scope: Scope,
+    original_path: &str,
+    backup_path: &str,
+    created_at: &str,
+) -> crate::Result<()> {
+    conn.execute(
+        "INSERT INTO backups (id, project_id, scope, original_path, backup_path, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            project_id,
+            enum_str(&scope)?,
+            original_path,
+            backup_path,
+            created_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// List backups for a project (most recent first).
+pub fn list_backups(conn: &Connection, project_id: &str) -> crate::Result<Vec<BackupRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, scope, original_path, backup_path, created_at
+         FROM backups WHERE project_id = ?1 ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map(params![project_id], |r| {
+        Ok(BackupRecord {
+            id: r.get(0)?,
+            project_id: r.get(1)?,
+            scope: r.get(2)?,
+            original_path: r.get(3)?,
+            backup_path: r.get(4)?,
+            created_at: r.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 /// Replace the known sensitive paths for a project.
 pub fn save_sensitive_paths(
     conn: &mut Connection,
