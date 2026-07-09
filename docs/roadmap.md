@@ -16,7 +16,7 @@
 | 3 프로필/스캐너 | ✅ 완료 | 프로필 셀렉터·추천 일괄 적용 |
 | 4 Should-have | ✅ 완료 | Bedrock/Env 화면·gitignore 추천 |
 | 5 패키징 | 🟡 부분 | 아이콘 세트·번들 설정 완료. MSI/NSIS 빌드·서명은 Windows+정책(#4/#5) |
-| Could-have | 🟡 일부 | Markdown 리포트 완료. Dark mode/단축키/Import·Export는 후속 |
+| Could-have | ✅ 완료 | Markdown 리포트·정책 템플릿 Import/Export·인앱 가이드·키보드 단축키·Dark mode(기본) |
 
 > **Monaco 노트**: Raw JSON 탭은 현재 경량 textarea 에디터(validate/format/save 완비)다.
 > 문서상 선택지인 Monaco는 헤드리스 환경에서 렌더링 검증 불가 + CSP `worker-src` 튜닝이
