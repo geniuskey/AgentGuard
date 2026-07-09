@@ -297,3 +297,37 @@ export async function policyReport(args: {
 }): Promise<string> {
   return invoke<string>('policy_report', args);
 }
+
+/** Export the current rule set to a user-chosen `.json` file. Returns the path, or null if cancelled. */
+export async function exportTemplate(scoped: ScopedRulesDto, defaultName: string): Promise<string | null> {
+  const text = await invoke<string>('export_template', { scoped });
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  const path = await save({
+    defaultPath: `${defaultName}-agentguard-template.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (!path) return null;
+  await invoke<void>('write_text_file', { path, contents: text });
+  return path;
+}
+
+/** Import a rule set from a user-chosen `.json` file. Returns the parsed rules, or null if cancelled. */
+export async function importTemplate(): Promise<ScopedRulesDto | null> {
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const path = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+  if (typeof path !== 'string') return null;
+  const text = await invoke<string>('read_text_file', { path });
+  return invoke<ScopedRulesDto>('import_template', { text });
+}
+
+/** Save Markdown report text to a user-chosen file. Returns the path or null. */
+export async function saveReportFile(markdown: string, defaultName: string): Promise<string | null> {
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  const path = await save({
+    defaultPath: `${defaultName}-policy-report.md`,
+    filters: [{ name: 'Markdown', extensions: ['md'] }]
+  });
+  if (!path) return null;
+  await invoke<void>('write_text_file', { path, contents: markdown });
+  return path;
+}

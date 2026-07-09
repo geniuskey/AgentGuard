@@ -5,19 +5,24 @@
     addLocalToGitignore,
     applyProfile,
     buildDiff,
+    exportTemplate,
     gitignoreStatus,
+    importTemplate,
     listBackups,
+    loadSettings,
     policyReport,
     previewBackup,
     restoreBackup,
+    saveReportFile,
     saveSettings,
     scanRecommendationRules,
     type BackupRecord,
     type DiffView,
     type GitignoreStatus,
+    type Policy,
     type ScopeName
   } from '$lib/ipc';
-  import { app, mergeRules, refreshEffective, setDefaultMode } from '$lib/state.svelte';
+  import { app, mergeRules, refreshEffective, setDefaultMode, setPolicy } from '$lib/state.svelte';
   import FileExplorer from '$lib/components/FileExplorer.svelte';
   import PolicyEditor from '$lib/components/PolicyEditor.svelte';
   import EffectivePreview from '$lib/components/EffectivePreview.svelte';
@@ -132,7 +137,6 @@
       backupPreview = null;
       backups = null;
       // Reload rules to reflect restored file.
-      const { loadSettings } = await import('$lib/ipc');
       app.scoped = await loadSettings(app.projectRoot);
       await refreshEffective();
     } catch (e) {
@@ -157,7 +161,65 @@
   async function copyReport() {
     if (report) await navigator.clipboard.writeText(report);
   }
+
+  let status = $state<string | null>(null);
+
+  async function doExport() {
+    try {
+      const p = await exportTemplate(app.scoped, app.projectName);
+      if (p) status = `템플릿 저장됨 → ${p}`;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function doImport() {
+    try {
+      const s = await importTemplate();
+      if (s) {
+        app.scoped = s;
+        app.dirty = true;
+        await refreshEffective();
+        status = '템플릿을 불러왔습니다. 저장하면 적용됩니다.';
+      }
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function saveReport() {
+    if (!report) return;
+    try {
+      const p = await saveReportFile(report, app.projectName);
+      if (p) status = `리포트 저장됨 → ${p}`;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  // Keyboard shortcuts: Ctrl/Cmd+S save; a/d/k set policy on the selected path.
+  async function applyQuick(policy: Policy) {
+    if (!app.selectedPath) return;
+    setPolicy(app.selectedPath, policy, 'folder-and-children');
+    await refreshEffective();
+  }
+
+  function onKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (app.dirty) openSaveDialog();
+      return;
+    }
+    if (!app.selectedPath) return;
+    if (e.key === 'a') applyQuick('allow');
+    else if (e.key === 'd') applyQuick('deny');
+    else if (e.key === 'k') applyQuick('ask');
+  }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="top">
   <button class="back" onclick={() => goto('/')}>← Home</button>
@@ -181,6 +243,9 @@
   <button class="mini" onclick={() => goto('/env')}>Env</button>
   <button class="mini" onclick={openBackups}>Backups</button>
   <button class="mini" onclick={makeReport}>Report</button>
+  <button class="mini" onclick={doExport}>Export</button>
+  <button class="mini" onclick={doImport}>Import</button>
+  <button class="mini" onclick={() => goto('/guide')} title="사용 가이드">?</button>
 
   <label class="dd">
     <input type="checkbox" checked={dontAsk} onchange={toggleDefaultDeny} />
@@ -199,6 +264,7 @@
 {/if}
 
 {#if error}<div class="err">{error}</div>{/if}
+{#if status}<div class="status" role="status">{status}</div>{/if}
 
 <div class="cols">
   <section class="left"><FileExplorer /></section>
@@ -264,7 +330,8 @@
       <pre class="preview">{report}</pre>
       <div class="modal-actions">
         <button onclick={() => (report = null)}>닫기</button>
-        <button class="primary" onclick={copyReport}>클립보드에 복사</button>
+        <button onclick={copyReport}>클립보드에 복사</button>
+        <button class="primary" onclick={saveReport}>파일로 저장</button>
       </div>
     </div>
   </div>
@@ -287,6 +354,7 @@
   .banner button { margin-left: auto; background: #78350f; border: none; color: #fde68a; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; }
   .banner code { background: #00000033; padding: 0 0.25rem; border-radius: 3px; }
   .err { background: #7f1d1d; color: #fecaca; padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+  .status { background: #0e2a1a; color: #bbf7d0; padding: 0.35rem 0.8rem; font-size: 0.78rem; }
   .cols { display: grid; grid-template-columns: 1fr 1fr 1fr; height: calc(100vh - 46px); }
   .left { border-right: 1px solid #1e293b; }
   .mid { border-right: 1px solid #1e293b; overflow: auto; }

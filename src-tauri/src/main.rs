@@ -56,6 +56,10 @@ fn main() {
             commands::gitignore_status,
             commands::add_local_to_gitignore,
             commands::policy_report,
+            commands::export_template,
+            commands::import_template,
+            commands::write_text_file,
+            commands::read_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agent Guard");

@@ -494,3 +494,36 @@ pub fn policy_report(
         &effective,
     ))
 }
+
+/// A portable policy template (all scopes' rules), for team sharing (req §15.3).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyTemplate {
+    pub version: u32,
+    pub scoped: ScopedRulesDto,
+}
+
+#[tauri::command]
+pub fn export_template(scoped: ScopedRulesDto) -> Result<String, String> {
+    let tmpl = PolicyTemplate { version: 1, scoped };
+    serde_json::to_string_pretty(&tmpl).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn import_template(text: String) -> Result<ScopedRulesDto, String> {
+    let tmpl: PolicyTemplate =
+        serde_json::from_str(&text).map_err(|e| format!("invalid template: {e}"))?;
+    Ok(tmpl.scoped)
+}
+
+/// Write UTF-8 text to a user-chosen path (used by template/report export).
+#[tauri::command]
+pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
+/// Read UTF-8 text from a user-chosen path (used by template import).
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
