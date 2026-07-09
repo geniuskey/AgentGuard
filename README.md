@@ -17,8 +17,9 @@ agents can access inside a project — without having to understand `settings.js
 ## Status
 
 Greenfield. This repository currently contains the **design & planning
-documents** that make the v0.1 requirements executable. Code scaffolding
-follows once the tech stack is confirmed (see `docs/tech-stack.md`).
+documents** that make the v0.1 requirements executable. The stack is confirmed —
+**Tauri 2 + SvelteKit (Svelte 5) + TypeScript + Rust + SQLite + Monaco**
+(see `docs/tech-stack.md`) — and code scaffolding follows next.
 
 ## Documentation
 

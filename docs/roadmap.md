@@ -6,9 +6,10 @@
 
 ---
 
-## Iteration 0 — 스택 확정 & 스캐폴딩 (선행)
+## Iteration 0 — 스캐폴딩 (선행)
 
-- `tech-stack.md` 검토 후 프론트 프레임워크 확정.
+- 스택 확정됨: **Tauri 2 + SvelteKit(Svelte 5, adapter-static) + Rust + SQLite + Monaco** (tech-stack.md).
+- SvelteKit 프론트(`src/routes`, `src/lib`, adapter-static) + Tauri 2 셸 스캐폴딩.
 - Tauri 2 프로젝트 생성, `src-tauri/src/{main,fs_scan,settings,policy,backup,db,env}.rs` 스텁.
 - SQLite 초기화(data-model.md v1 스키마), `%APPDATA%\AgentGuard\` 부트스트랩.
 - **산출물**: 빈 창이 뜨고 DB/폴더가 생성되는 실행 파일.

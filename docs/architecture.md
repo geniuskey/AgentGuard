@@ -119,13 +119,28 @@ get_env_status() -> EnvStatus                 // Should-have (env.rs)
 
 ---
 
-## 7. 초기 Repo 구조 (요구사항서 23장, 스택 확정 후 생성)
+## 7. 초기 Repo 구조 (요구사항서 23장)
+
+프론트엔드는 **SvelteKit(Svelte 5) + adapter-static(SPA)** 확정(tech-stack.md).
 
 ```
 agent-guard/
-├─ src-tauri/src/{main,fs_scan,settings,policy,backup,db,env}.rs
-├─ src/                 # 프론트 (SvelteKit 또는 React — tech-stack.md)
-│  ├─ routes/  components/  lib/{policy,settings,risk}.ts
-├─ docs/                # 본 설계 문서 묶음
+├─ src-tauri/
+│  ├─ src/{main,fs_scan,settings,policy,backup,db,env}.rs
+│  └─ tauri.conf.json
+├─ src/                          # SvelteKit 프론트
+│  ├─ routes/                    # 화면 (Home, Explorer 등) — SSR off
+│  ├─ lib/
+│  │  ├─ components/             # FileExplorer/PolicyEditor/EffectivePreview/
+│  │  │                          #   RawJsonEditor/DiffViewer .svelte
+│  │  ├─ ipc.ts                  # Tauri invoke 래퍼
+│  │  └─ {policy,settings,risk}.ts  # command 타입 래퍼 (로직은 Rust)
+│  └─ app.html
+├─ svelte.config.js              # adapter-static
+├─ docs/                         # 본 설계 문서 묶음
 └─ README.md
 ```
+
+- SvelteKit은 `adapter-static`으로 정적 SPA 빌드 → Tauri WebView가 로드.
+- 상태는 Svelte 5 runes(`$state`/`$derived`)로 관리(전역은 `lib`의 runes 모듈).
+- Monaco는 `RawJsonEditor.svelte`에서 `onMount` 동적 import(초기 번들 경량 유지).
