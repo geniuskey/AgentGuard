@@ -21,6 +21,30 @@ documents** that make the v0.1 requirements executable. The stack is confirmed �
 **Tauri 2 + SvelteKit (Svelte 5) + TypeScript + Rust + SQLite + Monaco**
 (see `docs/tech-stack.md`) — and code scaffolding follows next.
 
+## Development
+
+Prerequisites: Node 18+, Rust (stable), and — for the desktop shell — the
+[Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
+
+```bash
+npm install              # frontend deps
+
+# Core logic (pure Rust, no WebView needed — runs anywhere)
+cargo test -p agentguard-core
+
+# Frontend (static SPA build + typecheck)
+npm run build
+npm run check
+
+# Full desktop app (needs Tauri prerequisites; Windows is the primary target)
+npm run tauri dev        # launches the window
+npm run tauri build      # produces the installer
+```
+
+Layout: `crates/agentguard-core` holds all Tauri-independent logic (policy
+conversion, risk scoring, storage) so it stays unit-testable on any host;
+`src-tauri` is the thin Tauri 2 shell; `src` is the SvelteKit frontend.
+
 ## Documentation
 
 | 문서 | 내용 |

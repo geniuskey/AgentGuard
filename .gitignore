@@ -1,0 +1,22 @@
+# Rust
+/target
+**/target
+
+# Node / SvelteKit
+node_modules
+/build
+/.svelte-kit
+/dist
+package-lock.json.bak
+
+# Tauri build output
+src-tauri/target
+src-tauri/gen
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+.idea
+.vscode/*
+!.vscode/extensions.json
