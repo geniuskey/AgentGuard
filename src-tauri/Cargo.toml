@@ -1,0 +1,28 @@
+[package]
+name = "agentguard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Agent Guard — local-first access-policy editor for coding agents."
+default-run = "agentguard"
+
+[[bin]]
+name = "agentguard"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+agentguard-core = { path = "../crates/agentguard-core" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[features]
+# Enabled by tauri when building via the CLI; harmless otherwise.
+custom-protocol = ["tauri/custom-protocol"]
