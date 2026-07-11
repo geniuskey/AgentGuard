@@ -27,6 +27,8 @@ export interface PolicyRule {
 export interface ScopeRules {
   rules: PolicyRule[];
   defaultMode: string | null;
+  /** Non-path tool denies toggled on (web/network capability block). */
+  extraDeny: string[];
 }
 
 export interface ScopedRulesDto {
@@ -330,4 +332,92 @@ export async function saveReportFile(markdown: string, defaultName: string): Pro
   if (!path) return null;
   await invoke<void>('write_text_file', { path, contents: markdown });
   return path;
+}
+
+// --- Multi-agent global settings hub ----------------------------------------
+
+export interface AgentGlobal {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  format: 'json' | 'toml';
+  structured: boolean;
+  route: string;
+  exists: boolean;
+}
+
+export async function listAgentGlobals(): Promise<AgentGlobal[]> {
+  if (!inTauri()) return [];
+  return invoke<AgentGlobal[]>('list_agent_globals');
+}
+
+export async function getAgentGlobal(id: string): Promise<AgentGlobal> {
+  return invoke<AgentGlobal>('get_agent_global', { id });
+}
+
+export async function readAgentConfig(path: string): Promise<string> {
+  return invoke<string>('read_agent_config', { path });
+}
+
+export async function validateConfig(text: string, format: string): Promise<string | null> {
+  return invoke<string | null>('validate_config', { text, format });
+}
+
+export async function saveAgentConfig(args: {
+  path: string;
+  text: string;
+  format: string;
+  agentId: string;
+}): Promise<SaveResult> {
+  return invoke<SaveResult>('save_agent_config', {
+    path: args.path,
+    text: args.text,
+    format: args.format,
+    agentId: args.agentId,
+    timestamp: backupTimestamp()
+  });
+}
+
+/** Convert an absolute folder path into a Claude Code glob pattern (`~/rel/**`). */
+export async function homeRelativePattern(path: string): Promise<string> {
+  return invoke<string>('home_relative_pattern', { path });
+}
+
+// --- System explorer (all drives) --------------------------------------------
+
+export interface SystemEntry {
+  name: string;
+  /** Absolute OS path. */
+  path: string;
+  /** Claude pattern base (`~/x`, `//c/x`) — append `/**` for folder rules. */
+  pattern: string;
+  isDir: boolean;
+}
+
+/** Explorer roots: home folder + every mounted drive. */
+export async function listDrives(): Promise<SystemEntry[]> {
+  if (!inTauri()) return [];
+  return invoke<SystemEntry[]>('list_drives');
+}
+
+/** List one directory anywhere on the machine (read-only), folders first. */
+export async function listSystemDir(path: string): Promise<SystemEntry[]> {
+  return invoke<SystemEntry[]>('list_system_dir', { path });
+}
+
+/** Claude Code intranet baseline as neutral Deny rules. */
+export async function intranetRecommendationRules(): Promise<PolicyRule[]> {
+  return invoke<PolicyRule[]>('intranet_recommendation_rules');
+}
+
+/** Merge an agent's intranet security baseline into its current config text (Codex/OpenCode). */
+export async function intranetRecommendation(agentId: string, currentText: string): Promise<string> {
+  return invoke<string>('intranet_recommendation', { agentId, currentText });
+}
+
+/** The web/network deny specifiers a "block web access" toggle applies (Claude Code). */
+export async function webBlockSpecifiers(): Promise<string[]> {
+  if (!inTauri()) return ['WebSearch', 'WebFetch', 'Bash(curl:*)', 'Bash(wget:*)'];
+  return invoke<string[]>('web_block_specifiers');
 }

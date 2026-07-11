@@ -31,7 +31,7 @@
 
   <div class="field">
     <span>Path</span>
-    <code>{target}</code>
+    <code class="target">{target}</code>
   </div>
 
   <div class="field">
@@ -55,13 +55,23 @@
 
   <div class="field">
     <span>Current (this scope)</span>
-    <code>{current ? current.policy.toUpperCase() : '— (untracked)'}</code>
+    {#if current}
+      <span class="cur cur-{current.policy}">{current.policy.toUpperCase()}</span>
+    {:else}
+      <span class="cur cur-none">— untracked</span>
+    {/if}
   </div>
 
   <div class="buttons">
-    <button class="allow" onclick={() => apply('allow')} disabled={!app.selectedPath}>Allow</button>
-    <button class="ask" onclick={() => apply('ask')} disabled={!app.selectedPath}>Ask</button>
-    <button class="deny" onclick={() => apply('deny')} disabled={!app.selectedPath}>Deny</button>
+    <button class="allow" onclick={() => apply('allow')} disabled={!app.selectedPath}>
+      Allow <kbd>A</kbd>
+    </button>
+    <button class="ask" onclick={() => apply('ask')} disabled={!app.selectedPath}>
+      Ask <kbd>K</kbd>
+    </button>
+    <button class="deny" onclick={() => apply('deny')} disabled={!app.selectedPath}>
+      Deny <kbd>D</kbd>
+    </button>
     <button class="clear" onclick={clear} disabled={!current}>Clear rule</button>
   </div>
 
@@ -71,23 +81,171 @@
 </div>
 
 <style>
-  .panel { padding: 0.75rem; }
-  h3 { margin: 0 0 0.75rem; font-size: 0.95rem; }
-  .field { display: block; margin-bottom: 0.75rem; }
-  .field > span { display: block; font-size: 0.72rem; color: #94a3b8; margin-bottom: 0.25rem; }
-  code { background: #0b1220; padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.8rem; display: inline-block; }
-  select { width: 100%; padding: 0.4rem; background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; }
-  .segmented { display: flex; gap: 0.3rem; }
-  .segmented button {
-    flex: 1; padding: 0.35rem; background: #0b1220; border: 1px solid #334155; color: #94a3b8;
-    border-radius: 6px; cursor: pointer; text-transform: capitalize;
+  .panel {
+    padding: 0.85rem;
   }
-  .segmented button.active { border-color: #2563eb; color: #93c5fd; }
-  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; margin-top: 0.5rem; }
-  .buttons button { padding: 0.5rem; border-radius: 6px; border: 1px solid #334155; cursor: pointer; color: #e2e8f0; background: #1e293b; }
-  .buttons button:disabled { opacity: 0.45; cursor: default; }
-  .allow { border-color: #14532d !important; }
-  .ask { border-color: #78350f !important; }
-  .deny { border-color: #7f1d1d !important; }
-  .hint { color: #64748b; font-size: 0.8rem; }
+  h3 {
+    margin: 0 0 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-2);
+  }
+  .field {
+    display: block;
+    margin-bottom: 0.85rem;
+  }
+  .field > span {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 0.3rem;
+  }
+  .target {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--r-sm);
+    font-size: 0.79rem;
+    display: block;
+    word-break: break-all;
+    color: var(--text-1);
+  }
+  select {
+    width: 100%;
+    padding: 0.45rem;
+    background: var(--bg-1);
+    color: var(--text-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    font-size: 0.84rem;
+  }
+  select:disabled {
+    opacity: 0.5;
+  }
+  .segmented {
+    display: flex;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 0.18rem;
+    gap: 0.18rem;
+  }
+  .segmented button {
+    flex: 1;
+    padding: 0.32rem;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    border-radius: 4px;
+    cursor: pointer;
+    text-transform: capitalize;
+    font-size: 0.8rem;
+    transition: background-color var(--t-fast), color var(--t-fast);
+  }
+  .segmented button:hover {
+    color: var(--text-1);
+  }
+  .segmented button.active {
+    background: var(--bg-3);
+    color: var(--accent-text);
+    box-shadow: var(--shadow-1);
+  }
+  .cur {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.18rem 0.6rem;
+    border-radius: 999px;
+  }
+  .cur-allow {
+    background: var(--allow-soft);
+    color: var(--allow);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+  }
+  .cur-ask {
+    background: var(--ask-soft);
+    color: var(--ask);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+  }
+  .cur-deny {
+    background: var(--deny-soft);
+    color: var(--deny);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+  }
+  .cur-none {
+    color: var(--text-3);
+    border: 1px dashed var(--border-strong);
+    font-weight: 500;
+  }
+  .buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem;
+    margin-top: 0.6rem;
+  }
+  .buttons button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.55rem;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    cursor: pointer;
+    color: var(--text-1);
+    background: var(--bg-2);
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: background-color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast);
+  }
+  .buttons button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .buttons kbd {
+    font-size: 0.62rem;
+    padding: 0 0.3rem;
+    opacity: 0.7;
+  }
+  .allow {
+    border-color: rgba(52, 211, 153, 0.35);
+    color: var(--allow);
+    background: var(--allow-soft);
+  }
+  .allow:hover:not(:disabled) {
+    background: rgba(52, 211, 153, 0.22);
+    box-shadow: 0 0 14px rgba(52, 211, 153, 0.15);
+  }
+  .ask {
+    border-color: rgba(251, 191, 36, 0.35);
+    color: var(--ask);
+    background: var(--ask-soft);
+  }
+  .ask:hover:not(:disabled) {
+    background: rgba(251, 191, 36, 0.22);
+    box-shadow: 0 0 14px rgba(251, 191, 36, 0.15);
+  }
+  .deny {
+    border-color: rgba(248, 113, 113, 0.35);
+    color: var(--deny);
+    background: var(--deny-soft);
+  }
+  .deny:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.22);
+    box-shadow: 0 0 14px rgba(248, 113, 113, 0.15);
+  }
+  .clear:hover:not(:disabled) {
+    background: var(--bg-3);
+  }
+  .hint {
+    color: var(--text-3);
+    font-size: 0.8rem;
+    margin-top: 0.8rem;
+  }
 </style>

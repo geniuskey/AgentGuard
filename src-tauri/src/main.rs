@@ -60,6 +60,17 @@ fn main() {
             commands::import_template,
             commands::write_text_file,
             commands::read_text_file,
+            commands::list_agent_globals,
+            commands::get_agent_global,
+            commands::read_agent_config,
+            commands::validate_config,
+            commands::save_agent_config,
+            commands::home_relative_pattern,
+            commands::intranet_recommendation_rules,
+            commands::intranet_recommendation,
+            commands::web_block_specifiers,
+            commands::list_drives,
+            commands::list_system_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agent Guard");

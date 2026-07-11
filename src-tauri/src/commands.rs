@@ -6,7 +6,7 @@
 use agentguard_core::db::{self, ProjectRecord};
 use agentguard_core::effective::{self, EffectivePolicy, ScopedRules};
 use agentguard_core::fs_scan::{self, DirEntry, ScanResult};
-use agentguard_core::model::{PolicyRule, Scope};
+use agentguard_core::model::{AppliesTo, Policy, PolicyRule, RiskLevel, Scope};
 use agentguard_core::policy::{self, Permissions};
 use agentguard_core::risk::{self, RiskScore};
 use agentguard_core::{backup, paths, settings};
@@ -106,12 +106,27 @@ pub fn list_dir(project_root: String, rel_dir: String) -> Result<Vec<DirEntry>, 
     fs_scan::list_dir(Path::new(&project_root), &rel_dir).map_err(|e| e.to_string())
 }
 
-/// Neutral rules for one scope plus its defaultMode.
+/// Non-path tool denies toggled as a group to block the agent's web/network access,
+/// so prompts and file contents can't leave the machine (intranet no-exfil). These are
+/// tool-level rules, not path rules, so they ride alongside the neutral model as
+/// `extra_deny` and are preserved as unmanaged rules in `settings.json`.
+const WEB_DENY: &[&str] = &["WebSearch", "WebFetch", "Bash(curl:*)", "Bash(wget:*)"];
+
+/// The web/network deny specifiers (single source of truth for the UI toggle).
+#[tauri::command]
+pub fn web_block_specifiers() -> Vec<String> {
+    WEB_DENY.iter().map(|s| s.to_string()).collect()
+}
+
+/// Neutral rules for one scope plus its defaultMode and app-toggled capability denies.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ScopeRules {
     pub rules: Vec<PolicyRule>,
     pub default_mode: Option<String>,
+    /// Non-path deny specifiers currently toggled on (subset of [`WEB_DENY`]).
+    #[serde(default)]
+    pub extra_deny: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -153,10 +168,17 @@ fn read_scope(root: &Path, scope: Scope) -> Result<ScopeRules, String> {
     let file = scope_file(root, scope)?;
     let text = std::fs::read_to_string(&file).unwrap_or_default();
     let loaded = settings::parse(scope, &text).map_err(|e| e.to_string())?;
-    let (rules, _unmanaged) = policy::from_permissions(&loaded.permissions);
+    let (rules, unmanaged) = policy::from_permissions(&loaded.permissions);
+    // Surface which capability denies are currently present so the UI toggle reflects state.
+    let extra_deny = WEB_DENY
+        .iter()
+        .filter(|w| unmanaged.deny.iter().any(|d| d == **w))
+        .map(|w| w.to_string())
+        .collect();
     Ok(ScopeRules {
         rules,
         default_mode: loaded.default_mode,
+        extra_deny,
     })
 }
 
@@ -209,7 +231,16 @@ fn render_scope(
     let file = scope_file(root, scope)?;
     let before = std::fs::read_to_string(&file).unwrap_or_default();
     let loaded = settings::parse(scope, &before).map_err(|e| e.to_string())?;
-    let (_managed, unmanaged) = policy::from_permissions(&loaded.permissions);
+    let (_managed, mut unmanaged) = policy::from_permissions(&loaded.permissions);
+    // Reconcile app-toggled capability denies: drop all known ones, then add those
+    // currently enabled. This lets the toggle both add and remove them cleanly while
+    // leaving every other unmanaged rule untouched.
+    unmanaged.deny.retain(|d| !WEB_DENY.contains(&d.as_str()));
+    for d in &sr.extra_deny {
+        if !unmanaged.deny.contains(d) {
+            unmanaged.deny.push(d.clone());
+        }
+    }
     let after = settings::render(
         &loaded.raw,
         &sr.rules,
@@ -279,21 +310,25 @@ pub fn save_settings(
     // Write atomically.
     backup::atomic_write(&file, &after).map_err(|e| e.to_string())?;
 
-    // Persist rule metadata + backup record to DB.
+    // Persist rule metadata + backup record to DB. An empty `project_id` means the
+    // user scope is being edited without an open project (Home → User settings): there
+    // is no project row to attach to, so skip `project_paths` and record a project-less
+    // backup.
+    let proj_id: Option<&str> = if project_id.is_empty() {
+        None
+    } else {
+        Some(project_id.as_str())
+    };
     {
         let mut conn = state.0.lock().map_err(|e| e.to_string())?;
-        db::save_project_paths(
-            &mut conn,
-            &project_id,
-            scope,
-            &scope_rules.rules,
-            &timestamp,
-        )
-        .map_err(|e| e.to_string())?;
+        if let Some(pid) = proj_id {
+            db::save_project_paths(&mut conn, pid, scope, &scope_rules.rules, &timestamp)
+                .map_err(|e| e.to_string())?;
+        }
         if let Some(bp) = &backup_path {
             db::record_backup(
                 &conn,
-                Some(&project_id),
+                proj_id,
                 scope,
                 &file.to_string_lossy(),
                 &bp.to_string_lossy(),
@@ -356,10 +391,16 @@ pub fn save_raw_settings(
     backup::atomic_write(&file, &text).map_err(|e| e.to_string())?;
 
     if let Some(bp) = &backup_path {
+        // Empty `project_id` = user scope edited without an open project → project-less backup.
+        let proj_id: Option<&str> = if project_id.is_empty() {
+            None
+        } else {
+            Some(project_id.as_str())
+        };
         let conn = state.0.lock().map_err(|e| e.to_string())?;
         db::record_backup(
             &conn,
-            Some(&project_id),
+            proj_id,
             scope,
             &file.to_string_lossy(),
             &bp.to_string_lossy(),
@@ -526,4 +567,386 @@ pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+// --- Multi-agent global settings hub -----------------------------------------
+//
+// Beyond Claude Code, other local coding agents keep a global config under the home
+// dir (Codex: `~/.codex/config.toml`, OpenCode: `~/.config/opencode/opencode.json`).
+// The Home screen lists these so the user can jump straight into each one. Claude
+// Code keeps its structured rule editor (`route: "/user"`); the others are edited as
+// raw JSON/TOML with validation + backup (`route: "/agent?id=..."`).
+
+/// One agent's global config descriptor for the Home list.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentGlobal {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Absolute path to the resolved config file (first existing candidate, else the
+    /// primary/default candidate so the user can create it).
+    pub path: String,
+    /// `"json"` or `"toml"` — drives validation and formatting.
+    pub format: String,
+    /// True when a structured (visual) editor exists for this agent (Claude Code).
+    pub structured: bool,
+    /// Frontend route to open when the entry is clicked.
+    pub route: String,
+    pub exists: bool,
+}
+
+/// Static registry of known agents and their candidate global config paths.
+/// `candidates` are home-relative; the first that exists wins, else the first is used.
+fn agent_specs() -> Vec<(&'static str, &'static str, &'static str, Vec<&'static str>, &'static str, bool, &'static str)> {
+    vec![
+        (
+            "claude-code",
+            "Claude Code",
+            "Anthropic Claude Code — 도구 중심 permission (Allow/Ask/Deny)",
+            vec![".claude/settings.json"],
+            "json",
+            true,
+            "/user",
+        ),
+        (
+            "codex",
+            "Codex CLI",
+            "OpenAI Codex CLI — approval_policy / sandbox_mode (TOML)",
+            vec![".codex/config.toml"],
+            "toml",
+            false,
+            "/agent?id=codex",
+        ),
+        (
+            "opencode",
+            "OpenCode",
+            "OpenCode — permission / provider / mcp (JSON)",
+            vec![".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],
+            "json",
+            false,
+            "/agent?id=opencode",
+        ),
+    ]
+}
+
+fn resolve_agent(home: &Path, id: &str) -> Option<AgentGlobal> {
+    let (aid, name, desc, candidates, format, structured, route) =
+        agent_specs().into_iter().find(|s| s.0 == id)?;
+    let chosen = candidates
+        .iter()
+        .map(|c| home.join(c))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| home.join(candidates[0]));
+    Some(AgentGlobal {
+        id: aid.to_string(),
+        name: name.to_string(),
+        description: desc.to_string(),
+        path: chosen.to_string_lossy().to_string(),
+        format: format.to_string(),
+        structured,
+        route: route.to_string(),
+        exists: chosen.exists(),
+    })
+}
+
+/// List every known agent's global config (for the Home hub).
+#[tauri::command]
+pub fn list_agent_globals() -> Result<Vec<AgentGlobal>, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    Ok(agent_specs()
+        .into_iter()
+        .filter_map(|s| resolve_agent(&home, s.0))
+        .collect())
+}
+
+/// Resolve a single agent global config by id.
+#[tauri::command]
+pub fn get_agent_global(id: String) -> Result<AgentGlobal, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    resolve_agent(&home, &id).ok_or_else(|| format!("unknown agent: {id}"))
+}
+
+/// Read an agent config file's raw text (empty string if it doesn't exist).
+#[tauri::command]
+pub fn read_agent_config(path: String) -> Result<String, String> {
+    Ok(std::fs::read_to_string(&path).unwrap_or_default())
+}
+
+fn validate_config_text(text: &str, format: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    match format {
+        "json" => serde_json::from_str::<serde_json::Value>(text)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        "toml" => toml::from_str::<toml::Value>(text)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// Validate config text for a given format; returns an error message, or null when valid.
+#[tauri::command]
+pub fn validate_config(text: String, format: String) -> Result<Option<String>, String> {
+    Ok(validate_config_text(&text, &format).err())
+}
+
+/// Save an agent config after validating it (never writes invalid JSON/TOML).
+/// Backs up the existing file first (req §8.10, §9.4).
+#[tauri::command]
+pub fn save_agent_config(
+    path: String,
+    text: String,
+    format: String,
+    agent_id: String,
+    timestamp: String,
+) -> Result<SaveResult, String> {
+    validate_config_text(&text, &format)?;
+    let file = PathBuf::from(&path);
+    let backups = paths::backups_dir().map_err(|e| e.to_string())?;
+    let ext = if format == "toml" { "toml" } else { "json" };
+    let name = format!("{timestamp}_{agent_id}-global.{ext}");
+    let backup_path = backup::backup(&file, &backups, &name).map_err(|e| e.to_string())?;
+    backup::atomic_write(&file, &text).map_err(|e| e.to_string())?;
+    Ok(SaveResult {
+        written: file.to_string_lossy().to_string(),
+        backup: backup_path.map(|p| p.to_string_lossy().to_string()),
+    })
+}
+
+// --- Global folder restrictions & intranet recommended security sets ----------
+//
+// User-scope (global) policy can lock down sensitive locations on the whole PC —
+// credentials, keys, cloud config — which matters most on locked-down corporate
+// intranets. Claude Code (tool-centric) gets structured Deny rules; Codex/OpenCode
+// use their own models (sandbox / permission), so their "intranet set" is a config
+// baseline merged into the existing file.
+
+/// Convert an absolute folder path (e.g. from the native picker) into a Claude Code
+/// global glob specifier. Windows drive paths become `//c/…/**`, home paths `~/…/**`.
+/// (Delegates to the unit-tested core helper — see `policy::global_folder_pattern`.)
+#[tauri::command]
+pub fn home_relative_pattern(path: String) -> Result<String, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    Ok(policy::global_folder_pattern(&path, &home))
+}
+
+// --- System explorer (global/user scope) -------------------------------------
+
+/// One row in the all-drives explorer: an absolute OS path plus the Claude Code
+/// pattern base it maps to (`~/x` under home, `//c/x` elsewhere, no `/**` suffix —
+/// the frontend appends `/**` for folder rules).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemEntry {
+    pub name: String,
+    pub path: String,
+    pub pattern: String,
+    pub is_dir: bool,
+}
+
+/// Claude pattern base for an absolute path: the folder pattern without its
+/// trailing `/**` (which also yields the correct exact-match pattern for files).
+fn pattern_base(path: &Path, home: &Path) -> String {
+    let pat = policy::global_folder_pattern(&path.to_string_lossy(), home);
+    pat.trim_end_matches("/**").trim_end_matches('/').to_string()
+}
+
+/// Roots for the system explorer: the home folder first, then every mounted drive
+/// (Windows) or the filesystem root (POSIX).
+#[tauri::command]
+pub fn list_drives() -> Result<Vec<SystemEntry>, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let mut out = vec![SystemEntry {
+        name: format!("~ 홈 ({})", home.display()),
+        path: home.to_string_lossy().to_string(),
+        pattern: "~".to_string(),
+        is_dir: true,
+    }];
+    if cfg!(windows) {
+        for letter in b'A'..=b'Z' {
+            let root = format!("{}:\\", letter as char);
+            if Path::new(&root).exists() {
+                out.push(SystemEntry {
+                    name: format!("{}: 드라이브", letter as char),
+                    path: root.clone(),
+                    pattern: pattern_base(Path::new(&root), &home),
+                    is_dir: true,
+                });
+            }
+        }
+    } else {
+        out.push(SystemEntry {
+            name: "/".to_string(),
+            path: "/".to_string(),
+            pattern: "/".to_string(),
+            is_dir: true,
+        });
+    }
+    Ok(out)
+}
+
+/// List one directory anywhere on the machine (read-only), folders first.
+#[tauri::command]
+pub fn list_system_dir(path: String) -> Result<Vec<SystemEntry>, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let rd = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+    let mut out: Vec<SystemEntry> = rd
+        .flatten()
+        .map(|ent| {
+            let p = ent.path();
+            let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            SystemEntry {
+                name: ent.file_name().to_string_lossy().to_string(),
+                path: p.to_string_lossy().to_string(),
+                pattern: pattern_base(&p, &home),
+                is_dir,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(out)
+}
+
+/// Sensitive credential dirs (home) + secret-file globs (all drives) denied by the
+/// intranet baseline. Windows normalizes paths to POSIX, so `//**/…` spans every drive
+/// and `~/…` maps to the user profile. See <https://code.claude.com/docs/en/permissions>.
+const CLAUDE_INTRANET_DENY: &[&str] = &[
+    // Credential / cloud config directories under the home profile.
+    "~/.ssh/**",
+    "~/.aws/**",
+    "~/.config/gcloud/**",
+    "~/.azure/**",
+    "~/.kube/**",
+    "~/.gnupg/**",
+    "~/.docker/config.json",
+    "~/.config/gh/**",
+    "~/.netrc",
+    "~/.npmrc",
+    "~/.pypirc",
+    "~/.git-credentials",
+    "~/.password-store/**",
+    // Secret files anywhere on any drive (`//` = filesystem root, all drives on Windows).
+    "//**/*.pem",
+    "//**/*.key",
+    "//**/*.pfx",
+    "//**/*.p12",
+    "//**/id_rsa",
+    "//**/id_ed25519",
+    "//**/.env",
+    "//**/.env.*",
+];
+
+/// Lowercase system drive letter (Windows), derived from the home dir; `c` as fallback.
+fn system_drive(home: &Path) -> char {
+    home.to_string_lossy()
+        .chars()
+        .next()
+        .filter(|c| c.is_ascii_alphabetic())
+        .map(|c| c.to_ascii_lowercase())
+        .unwrap_or('c')
+}
+
+/// The Claude Code intranet baseline as neutral Deny rules (merged into user scope):
+/// credentials, secret files, and Windows system directories.
+#[tauri::command]
+pub fn intranet_recommendation_rules() -> Result<Vec<PolicyRule>, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let drive = system_drive(&home);
+    let mut patterns: Vec<String> = CLAUDE_INTRANET_DENY.iter().map(|s| s.to_string()).collect();
+    // Windows system locations (no-ops on non-Windows).
+    patterns.push(format!("//{drive}/Windows/**"));
+    patterns.push(format!("//{drive}/ProgramData/**"));
+
+    Ok(patterns
+        .into_iter()
+        .map(|p| {
+            let mut r = PolicyRule::new(p, Policy::Deny, AppliesTo::Pattern);
+            r.reason = Some("사내 인트라넷 추천 보안 셋 — 민감 파일/자격증명/시스템 경로 차단".into());
+            r.risk_level = Some(RiskLevel::High);
+            r
+        })
+        .collect())
+}
+
+const CODEX_INTRANET_TOML: &str = r#"
+approval_policy = "untrusted"
+sandbox_mode = "workspace-write"
+
+[tools]
+web_search = false
+
+[sandbox_workspace_write]
+network_access = false
+"#;
+
+const OPENCODE_INTRANET_JSON: &str = r#"{
+  "permission": { "edit": "ask", "bash": "ask", "webfetch": "deny" }
+}"#;
+
+fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(b), serde_json::Value::Object(p)) => {
+            for (k, v) in p {
+                merge_json(b.entry(k.clone()).or_insert(serde_json::Value::Null), v);
+            }
+        }
+        (b, p) => *b = p.clone(),
+    }
+}
+
+fn merge_toml(base: &mut toml::Value, patch: &toml::Value) {
+    match (base, patch) {
+        (toml::Value::Table(b), toml::Value::Table(p)) => {
+            for (k, v) in p {
+                match b.get_mut(k) {
+                    Some(bv) => merge_toml(bv, v),
+                    None => {
+                        b.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        (b, p) => *b = p.clone(),
+    }
+}
+
+/// Merge the agent's intranet recommended security baseline into `current_text`
+/// (preserving existing keys) and return the new full config text for the user to
+/// review before saving. For Claude Code use [`intranet_recommendation_rules`] instead.
+#[tauri::command]
+pub fn intranet_recommendation(agent_id: String, current_text: String) -> Result<String, String> {
+    match agent_id.as_str() {
+        "codex" => {
+            let mut base: toml::Value = if current_text.trim().is_empty() {
+                toml::Value::Table(Default::default())
+            } else {
+                toml::from_str(&current_text).map_err(|e| e.to_string())?
+            };
+            let patch: toml::Value = toml::from_str(CODEX_INTRANET_TOML).map_err(|e| e.to_string())?;
+            merge_toml(&mut base, &patch);
+            toml::to_string(&base).map_err(|e| e.to_string())
+        }
+        "opencode" => {
+            let mut base: serde_json::Value = if current_text.trim().is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(&current_text).map_err(|e| e.to_string())?
+            };
+            let patch: serde_json::Value =
+                serde_json::from_str(OPENCODE_INTRANET_JSON).map_err(|e| e.to_string())?;
+            merge_json(&mut base, &patch);
+            let mut s = serde_json::to_string_pretty(&base).map_err(|e| e.to_string())?;
+            s.push('\n');
+            Ok(s)
+        }
+        other => Err(format!("no intranet recommendation for agent: {other}")),
+    }
 }

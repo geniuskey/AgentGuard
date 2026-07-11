@@ -5,9 +5,9 @@
 
 <div class="panel">
   <div class="head">
-    <span>{app.projectName || 'Files'}</span>
+    <span class="ptitle">{app.projectName || 'Files'}</span>
     <button class="root" class:active={app.selectedPath === ''} onclick={() => (app.selectedPath = '')}>
-      / (root)
+      / root
     </button>
   </div>
   <div class="tree">
@@ -22,16 +22,57 @@
 </div>
 
 <style>
-  .panel { display: flex; flex-direction: column; height: 100%; }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
   .head {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 0.5rem 0.6rem; border-bottom: 1px solid #1e293b; font-weight: 600; font-size: 0.85rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+  }
+  .ptitle {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-2);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .root {
-    font-size: 0.72rem; background: none; border: 1px solid #334155; color: #94a3b8;
-    border-radius: 4px; padding: 0.1rem 0.4rem; cursor: pointer;
+    font-size: 0.7rem;
+    font-family: var(--font-mono);
+    background: none;
+    border: 1px solid var(--border-strong);
+    color: var(--text-2);
+    border-radius: 4px;
+    padding: 0.12rem 0.45rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
   }
-  .root.active { border-color: #2563eb; color: #93c5fd; }
-  .tree { overflow: auto; padding: 0.35rem; flex: 1; }
-  .muted { color: #64748b; font-size: 0.85rem; }
+  .root:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+  .root.active {
+    border-color: rgba(79, 142, 247, 0.45);
+    background: var(--accent-soft);
+    color: var(--accent-text);
+  }
+  .tree {
+    overflow: auto;
+    padding: 0.4rem;
+    flex: 1;
+  }
+  .muted {
+    color: var(--text-3);
+    font-size: 0.85rem;
+  }
 </style>

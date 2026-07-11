@@ -49,6 +49,13 @@ pub fn specifier_for(path: &str, applies_to: AppliesTo) -> String {
 /// Best-effort inverse of [`specifier_for`]: specifier -> (relative path, applies_to).
 fn parse_specifier(spec: &str) -> (String, AppliesTo) {
     let s = spec.trim();
+    // Absolute (`//…`), settings-anchored (`/…`), or home (`~/…`) specifiers cannot be
+    // reproduced by the `./`-anchored File/Folder/FolderAndChildren forms — folding them
+    // that way would re-emit a mangled `./~/…` on the next save. Keep them verbatim as
+    // Pattern so global (user-scope) rules round-trip exactly.
+    if s.starts_with('/') || s.starts_with('~') {
+        return (s.to_string(), AppliesTo::Pattern);
+    }
     if let Some(base) = s.strip_suffix("/**") {
         (strip_anchor(base), AppliesTo::FolderAndChildren)
     } else if let Some(base) = s.strip_suffix("/*") {
@@ -63,6 +70,47 @@ fn parse_specifier(spec: &str) -> (String, AppliesTo) {
 
 fn strip_anchor(s: &str) -> String {
     s.trim_start_matches("./").to_string()
+}
+
+/// Convert an absolute OS path (e.g. from the native folder picker) into a Claude Code
+/// **global** (user-scope) permission pattern matching that folder recursively.
+///
+/// Claude Code normalizes Windows paths to POSIX before matching (`C:\X` -> `/c/X`) and
+/// distinguishes `//abs` (filesystem root), `~/home`, and `/settings-relative`. So:
+/// under the home dir -> `~/rel/**`; a Windows drive path -> `//c/rest/**`; any other
+/// absolute path -> `//abs/**`. See <https://code.claude.com/docs/en/permissions>.
+pub fn global_folder_pattern(path: &str, home: &std::path::Path) -> String {
+    let norm = path.replace('\\', "/");
+    let home_norm = home.to_string_lossy().replace('\\', "/");
+    let home_norm = home_norm.trim_end_matches('/');
+
+    let base = if norm == home_norm {
+        "~".to_string()
+    } else if let Some(rel) = norm.strip_prefix(&format!("{home_norm}/")) {
+        format!("~/{rel}")
+    } else {
+        to_absolute_spec(&norm)
+    };
+    format!("{}/**", base.trim_end_matches('/'))
+}
+
+/// Map a POSIX-normalized absolute path to a Claude Code `//…` absolute specifier.
+fn to_absolute_spec(norm: &str) -> String {
+    let b = norm.as_bytes();
+    // Windows drive letter: "C:/rest" -> "//c/rest" (also "C:" / "C:/" -> "//c").
+    if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+        let drive = (b[0] as char).to_ascii_lowercase();
+        let rest = norm[2..].trim_start_matches('/');
+        if rest.is_empty() {
+            return format!("//{drive}");
+        }
+        return format!("//{drive}/{rest}");
+    }
+    // POSIX absolute: "/abs" (or already "//abs") -> "//abs".
+    match norm.strip_prefix('/') {
+        Some(rest) => format!("//{}", rest.trim_start_matches('/')),
+        None => norm.to_string(),
+    }
 }
 
 /// Which tools a rule expands to.
@@ -272,6 +320,56 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].path, "notes");
         assert_eq!(rules[0].tools, Some(vec![Tool::Read, Tool::Grep]));
+    }
+
+    #[test]
+    fn absolute_and_home_specifiers_round_trip_as_pattern() {
+        // Global (user-scope) rules use //abs, ~/home, or /settings-anchored specifiers.
+        // These must fold back to Pattern and re-emit byte-identically (no `./` mangling).
+        for spec in [
+            "~/.ssh/**",
+            "//c/Windows/**",
+            "//**/*.pem",
+            "//d/data/secret/**",
+            "/settings/anchored/**",
+        ] {
+            let perms = Permissions {
+                deny: FILE_ACCESS_TOOLS
+                    .iter()
+                    .map(|t| format!("{}({})", t.as_str(), spec))
+                    .collect(),
+                ..Default::default()
+            };
+            let (rules, unmanaged) = from_permissions(&perms);
+            assert_eq!(unmanaged, UnmanagedRules::default());
+            assert_eq!(rules.len(), 1, "{spec}");
+            assert_eq!(rules[0].applies_to, AppliesTo::Pattern, "{spec}");
+            assert_eq!(rules[0].path, spec, "{spec}");
+            // Re-emit is identical.
+            let re = to_permissions(&rules);
+            assert_eq!(re.deny, perms.deny, "{spec}");
+        }
+    }
+
+    #[test]
+    fn global_folder_pattern_windows_and_home() {
+        use std::path::Path;
+        let home = Path::new(r"C:\Users\geniu");
+        assert_eq!(global_folder_pattern(r"C:\Windows", home), "//c/Windows/**");
+        assert_eq!(global_folder_pattern(r"C:\", home), "//c/**");
+        assert_eq!(
+            global_folder_pattern(r"D:\data\secret", home),
+            "//d/data/secret/**"
+        );
+        assert_eq!(
+            global_folder_pattern(r"C:\Users\geniu\Documents", home),
+            "~/Documents/**"
+        );
+        assert_eq!(global_folder_pattern(r"C:\Users\geniu", home), "~/**");
+        // POSIX host (folder picker on non-Windows).
+        let uhome = Path::new("/home/u");
+        assert_eq!(global_folder_pattern("/etc/ssh", uhome), "//etc/ssh/**");
+        assert_eq!(global_folder_pattern("/home/u/docs", uhome), "~/docs/**");
     }
 
     #[test]

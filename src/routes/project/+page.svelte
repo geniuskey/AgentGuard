@@ -221,61 +221,72 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="top">
-  <button class="back" onclick={() => goto('/')}>← Home</button>
-  <div class="title">
-    {app.projectName}
-    {#if app.view?.risk}
-      <span class="risk risk-{app.view.risk.level.toLowerCase()}">
-        Risk {app.view.risk.level} ({app.view.risk.score})
-      </span>
-    {/if}
-  </div>
-
-  <select class="profile" bind:value={profile} onchange={onProfileChange} title="프로필 적용">
-    <option value="">Profile…</option>
-    <option value="conservative">Conservative</option>
-    <option value="balanced">Balanced</option>
-    <option value="fast-dev">Fast Dev</option>
-    <option value="custom">Custom</option>
-  </select>
-  <button class="mini" onclick={applyScanRecommendations}>추천 적용</button>
-  <button class="mini" onclick={() => goto('/env')}>Env</button>
-  <button class="mini" onclick={openBackups}>Backups</button>
-  <button class="mini" onclick={makeReport}>Report</button>
-  <button class="mini" onclick={doExport}>Export</button>
-  <button class="mini" onclick={doImport}>Import</button>
-  <button class="mini" onclick={() => goto('/guide')} title="사용 가이드">?</button>
-
-  <label class="dd">
-    <input type="checkbox" checked={dontAsk} onchange={toggleDefaultDeny} />
-    Default Deny ({app.activeScope})
-  </label>
-  <button class="save" onclick={openSaveDialog} disabled={!app.dirty}>
-    {app.dirty ? '● Save…' : 'Saved'}
-  </button>
-</div>
-
-{#if gitignore && gitignore.exists && !gitignore.ignored}
-  <div class="banner">
-    ⚠️ <code>.claude/settings.local.json</code> 이 <code>.gitignore</code>에 없습니다 (개인 설정 유출 위험).
-    <button onclick={fixGitignore}>.gitignore에 추가</button>
-  </div>
-{/if}
-
-{#if error}<div class="err">{error}</div>{/if}
-{#if status}<div class="status" role="status">{status}</div>{/if}
-
-<div class="cols">
-  <section class="left"><FileExplorer /></section>
-  <section class="mid"><PolicyEditor /></section>
-  <section class="right">
-    <div class="rmode">
-      <button class:active={rightMode === 'effective'} onclick={() => (rightMode = 'effective')}>Effective</button>
-      <button class:active={rightMode === 'raw'} onclick={() => (rightMode = 'raw')}>Raw JSON</button>
+<div class="page">
+  <div class="top">
+    <button class="back" onclick={() => goto('/')} aria-label="홈으로">←</button>
+    <div class="title">
+      {app.projectName}
+      {#if app.view?.risk}
+        <span class="risk risk-{app.view.risk.level.toLowerCase()}">
+          Risk {app.view.risk.level} · {app.view.risk.score}
+        </span>
+      {/if}
     </div>
-    {#if rightMode === 'effective'}<EffectivePreview />{:else}<RawJsonEditor />{/if}
-  </section>
+
+    <div class="tools">
+      <select class="profile" bind:value={profile} onchange={onProfileChange} title="프로필 적용">
+        <option value="">Profile…</option>
+        <option value="conservative">Conservative</option>
+        <option value="balanced">Balanced</option>
+        <option value="fast-dev">Fast Dev</option>
+        <option value="custom">Custom</option>
+      </select>
+      <button class="mini" onclick={applyScanRecommendations}>추천 적용</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button class="mini" onclick={() => goto('/env')}>Env</button>
+      <button class="mini" onclick={openBackups}>Backups</button>
+      <button class="mini" onclick={makeReport}>Report</button>
+      <button class="mini" onclick={doExport}>Export</button>
+      <button class="mini" onclick={doImport}>Import</button>
+      <button class="mini" onclick={() => goto('/guide')} title="사용 가이드" aria-label="사용 가이드">?</button>
+    </div>
+
+    <label class="dd" title="명시적으로 허용한 경로 외에는 모두 차단">
+      <input type="checkbox" checked={dontAsk} onchange={toggleDefaultDeny} />
+      Default Deny <span class="dd-scope">{app.activeScope}</span>
+    </label>
+    <button class="save" class:dirty={app.dirty} onclick={openSaveDialog} disabled={!app.dirty}>
+      {#if app.dirty}<span class="save-dot" aria-hidden="true"></span>Save…{:else}Saved{/if}
+    </button>
+  </div>
+
+  {#if gitignore && gitignore.exists && !gitignore.ignored}
+    <div class="banner">
+      <span class="banner-icon" aria-hidden="true">⚠</span>
+      <span>
+        <code>.claude/settings.local.json</code> 이 <code>.gitignore</code>에 없습니다 (개인 설정 유출
+        위험).
+      </span>
+      <button onclick={fixGitignore}>.gitignore에 추가</button>
+    </div>
+  {/if}
+
+  {#if error}<div class="err" role="alert">{error}</div>{/if}
+  {#if status}<div class="status" role="status">{status}</div>{/if}
+
+  <div class="cols">
+    <section class="left"><FileExplorer /></section>
+    <section class="mid"><PolicyEditor /></section>
+    <section class="right">
+      <div class="rmode">
+        <button class:active={rightMode === 'effective'} onclick={() => (rightMode = 'effective')}>
+          Effective
+        </button>
+        <button class:active={rightMode === 'raw'} onclick={() => (rightMode = 'raw')}>Raw JSON</button>
+      </div>
+      {#if rightMode === 'effective'}<EffectivePreview />{:else}<RawJsonEditor />{/if}
+    </section>
+  </div>
 </div>
 
 {#if diff}
@@ -304,10 +315,10 @@
         <ul class="blist">
           {#each backups as b (b.id)}
             <li>
-              <span>{b.createdAt} · {b.scope}</span>
+              <span class="binfo">{b.createdAt} · {b.scope}</span>
               <span class="bactions">
                 <button onclick={() => showBackup(b)}>미리보기</button>
-                <button class="primary" onclick={() => doRestore(b)}>복원</button>
+                <button class="bprimary" onclick={() => doRestore(b)}>복원</button>
               </span>
             </li>
           {/each}
@@ -338,44 +349,306 @@
 {/if}
 
 <style>
-  .top { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #1e293b; background: #0b1220; flex-wrap: wrap; }
-  .back { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; }
-  .title { font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
-  .risk { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; }
-  .risk-high { background: #7f1d1d; color: #fecaca; }
-  .risk-medium { background: #78350f; color: #fde68a; }
-  .risk-low { background: #14532d; color: #bbf7d0; }
-  .profile { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 0.3rem; font-size: 0.78rem; }
-  .mini { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
-  .dd { margin-left: auto; font-size: 0.78rem; color: #94a3b8; display: flex; align-items: center; gap: 0.3rem; }
-  .save { background: #2563eb; border: none; color: white; border-radius: 6px; padding: 0.4rem 0.9rem; cursor: pointer; }
-  .save:disabled { background: #1e293b; color: #64748b; cursor: default; }
-  .banner { background: #422006; color: #fde68a; padding: 0.4rem 0.8rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.5rem; }
-  .banner button { margin-left: auto; background: #78350f; border: none; color: #fde68a; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; }
-  .banner code { background: #00000033; padding: 0 0.25rem; border-radius: 3px; }
-  .err { background: #7f1d1d; color: #fecaca; padding: 0.4rem 0.8rem; font-size: 0.8rem; }
-  .status { background: #0e2a1a; color: #bbf7d0; padding: 0.35rem 0.8rem; font-size: 0.78rem; }
-  .cols { display: grid; grid-template-columns: 1fr 1fr 1fr; height: calc(100vh - 46px); }
-  .left { border-right: 1px solid #1e293b; }
-  .mid { border-right: 1px solid #1e293b; overflow: auto; }
-  .cols section { min-height: 0; }
-  .rmode { display: flex; gap: 0.25rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid #1e293b; }
-  .rmode button { background: #0b1220; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.75rem; }
-  .rmode button.active { border-color: #2563eb; color: #93c5fd; }
-  .right { display: flex; flex-direction: column; }
-  .modal-bg { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; padding: 2rem; }
-  .modal { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 1rem; width: min(900px, 95vw); max-height: 90vh; overflow: auto; }
-  .modal h3 { margin: 0 0 0.25rem; font-size: 1rem; }
-  .fp { color: #64748b; font-size: 0.75rem; margin: 0 0 0.6rem; }
-  .nochg { color: #94a3b8; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.8rem; }
-  .modal-actions button { padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; cursor: pointer; }
-  .modal-actions .primary { background: #2563eb; border-color: #2563eb; }
-  .modal-actions .primary:disabled { opacity: 0.5; cursor: default; }
-  .blist { list-style: none; padding: 0; display: grid; gap: 0.3rem; }
-  .blist li { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; border: 1px solid #1e293b; border-radius: 6px; padding: 0.3rem 0.5rem; }
-  .bactions { display: flex; gap: 0.35rem; }
-  .bactions button { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.72rem; }
-  .bactions .primary { background: #2563eb; border-color: #2563eb; color: white; }
-  .preview { background: #0b1220; border: 1px solid #1e293b; border-radius: 6px; padding: 0.5rem; font-size: 0.72rem; max-height: 40vh; overflow: auto; white-space: pre-wrap; margin-top: 0.6rem; }
+  .page {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .back {
+    background: none;
+    border: 1px solid var(--border-strong);
+    color: var(--text-2);
+    border-radius: var(--r-sm);
+    padding: 0.28rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1.2;
+    transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
+  }
+  .back:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+  .title {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .risk {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 0.12rem 0.55rem;
+    border-radius: 999px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .risk-high {
+    background: var(--deny-soft);
+    color: var(--deny);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+  }
+  .risk-medium {
+    background: var(--ask-soft);
+    color: var(--ask);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+  }
+  .risk-low {
+    background: var(--allow-soft);
+    color: var(--allow);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .sep {
+    width: 1px;
+    height: 1.1rem;
+    background: var(--border);
+    margin: 0 0.2rem;
+  }
+  .profile {
+    background: var(--bg-1);
+    color: var(--text-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    padding: 0.3rem 0.4rem;
+    font-size: 0.78rem;
+  }
+  .mini {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-2);
+    border-radius: var(--r-sm);
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+    transition: color var(--t-fast), background-color var(--t-fast), border-color var(--t-fast);
+  }
+  .mini:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+    border-color: var(--border);
+  }
+  .dd {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+  }
+  .dd-scope {
+    font-size: 0.66rem;
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    border-radius: 999px;
+    padding: 0.05rem 0.45rem;
+    text-transform: capitalize;
+  }
+  .save {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    border-radius: var(--r-sm);
+    padding: 0.4rem 1rem;
+    font-weight: 600;
+    font-size: 0.84rem;
+    cursor: default;
+    transition: background-color var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
+  }
+  .save.dirty {
+    background: linear-gradient(180deg, #3b82f6, #2563eb);
+    border-color: rgba(147, 197, 253, 0.25);
+    color: white;
+    cursor: pointer;
+    box-shadow: 0 2px 14px rgba(37, 99, 235, 0.35);
+  }
+  .save.dirty:hover {
+    filter: brightness(1.08);
+  }
+  .save-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+  }
+  .banner {
+    background: var(--ask-soft);
+    border-bottom: 1px solid rgba(251, 191, 36, 0.25);
+    color: #fde68a;
+    padding: 0.45rem 0.8rem;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  .banner-icon {
+    color: var(--ask);
+  }
+  .banner code {
+    background: rgba(0, 0, 0, 0.25);
+    padding: 0 0.3rem;
+    border-radius: 3px;
+  }
+  .banner button {
+    margin-left: auto;
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    color: #fde68a;
+    border-radius: var(--r-sm);
+    padding: 0.25rem 0.65rem;
+    cursor: pointer;
+    font-size: 0.76rem;
+    transition: background-color var(--t-fast);
+  }
+  .banner button:hover {
+    background: rgba(251, 191, 36, 0.25);
+  }
+  .err {
+    background: var(--deny-soft);
+    border-bottom: 1px solid rgba(248, 113, 113, 0.25);
+    color: var(--deny);
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+  .status {
+    background: var(--allow-soft);
+    border-bottom: 1px solid rgba(52, 211, 153, 0.2);
+    color: var(--allow);
+    padding: 0.35rem 0.8rem;
+    font-size: 0.78rem;
+    flex-shrink: 0;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    flex: 1;
+    min-height: 0;
+  }
+  .left {
+    border-right: 1px solid var(--border);
+  }
+  .mid {
+    border-right: 1px solid var(--border);
+    overflow: auto;
+  }
+  .cols section {
+    min-height: 0;
+    min-width: 0;
+  }
+  .rmode {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .rmode button {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-2);
+    border-radius: var(--r-sm);
+    padding: 0.22rem 0.65rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: color var(--t-fast), background-color var(--t-fast), border-color var(--t-fast);
+  }
+  .rmode button:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+  .rmode button.active {
+    border-color: rgba(79, 142, 247, 0.35);
+    background: var(--accent-soft);
+    color: var(--accent-text);
+  }
+  .right {
+    display: flex;
+    flex-direction: column;
+  }
+  .fp {
+    color: var(--text-3);
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    margin: 0 0 0.6rem;
+    word-break: break-all;
+  }
+  .nochg {
+    color: var(--text-2);
+  }
+  .blist {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .blist li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    border-radius: var(--r-sm);
+    padding: 0.35rem 0.6rem;
+  }
+  .binfo {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+  .bactions {
+    display: flex;
+    gap: 0.35rem;
+  }
+  .bactions button {
+    background: var(--bg-3);
+    border: 1px solid var(--border-strong);
+    color: var(--text-1);
+    border-radius: 5px;
+    padding: 0.2rem 0.55rem;
+    cursor: pointer;
+    font-size: 0.72rem;
+    transition: background-color var(--t-fast), border-color var(--t-fast);
+  }
+  .bactions button:hover {
+    border-color: var(--accent);
+  }
+  .bactions .bprimary {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: white;
+  }
+  .preview {
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 0.6rem;
+    font-size: 0.72rem;
+    max-height: 40vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    margin-top: 0.6rem;
+  }
 </style>

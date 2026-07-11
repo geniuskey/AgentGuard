@@ -40,26 +40,50 @@
     {#each tabs as t (t.id)}
       <button class:active={tab === t.id} onclick={() => (tab = t.id)}>
         {t.label}
-        {#if t.id === 'conflicts' && conflicts.length}<span class="dot">{conflicts.length}</span>{/if}
+        {#if t.id === 'conflicts' && conflicts.length}<span class="cnt">{conflicts.length}</span>{/if}
       </button>
     {/each}
   </div>
 
   <div class="body">
     {#if tab === 'allowed'}
-      {#each allowed as e (e.path)}<div class="row"><span class="i">✅</span>{e.path}</div>{:else}<p class="muted">없음</p>{/each}
+      {#each allowed as e (e.path)}
+        <div class="row"><span class="pd pd-allow" aria-hidden="true"></span>{e.path}</div>
+      {:else}
+        <p class="muted">없음</p>
+      {/each}
     {:else if tab === 'denied'}
-      {#each denied as e (e.path)}<div class="row"><span class="i">⛔</span>{e.path}<span class="src">{e.sourceScope ?? ''}</span></div>{:else}<p class="muted">없음</p>{/each}
+      {#each denied as e (e.path)}
+        <div class="row">
+          <span class="pd pd-deny" aria-hidden="true"></span>{e.path}
+          <span class="src">{e.sourceScope ?? ''}</span>
+        </div>
+      {:else}
+        <p class="muted">없음</p>
+      {/each}
     {:else if tab === 'ask'}
-      {#each asked as e (e.path)}<div class="row"><span class="i">❓</span>{e.path}</div>{:else}<p class="muted">없음</p>{/each}
+      {#each asked as e (e.path)}
+        <div class="row"><span class="pd pd-ask" aria-hidden="true"></span>{e.path}</div>
+      {:else}
+        <p class="muted">없음</p>
+      {/each}
     {:else if tab === 'conflicts'}
-      {#each conflicts as e (e.path)}<div class="row conflict"><span class="i">⚠️</span>{e.path} → {e.effective.toUpperCase()} <span class="src">deny 우선</span></div>{:else}<p class="muted">충돌 없음</p>{/each}
+      {#each conflicts as e (e.path)}
+        <div class="row conflict">
+          <span class="pd pd-conflict" aria-hidden="true"></span>{e.path} → {e.effective.toUpperCase()}
+          <span class="src">deny 우선</span>
+        </div>
+      {:else}
+        <p class="muted">충돌 없음</p>
+      {/each}
     {:else if tab === 'byscope'}
       {#each byScope as g (g.scope)}
         <div class="scope-group">
           <b>{g.scope}{#if g.defaultMode} · defaultMode={g.defaultMode}{/if}</b>
           {#each g.rules as r (r.path + r.policy)}
-            <div class="row"><span class="i i-{r.policy}">{r.policy[0].toUpperCase()}</span>{r.path}</div>
+            <div class="row">
+              <span class="pletter l-{r.policy}">{r.policy[0].toUpperCase()}</span>{r.path}
+            </div>
           {:else}
             <p class="muted">규칙 없음</p>
           {/each}
@@ -67,9 +91,9 @@
       {/each}
     {:else if tab === 'raw'}
       {#if raw}
-        <div class="raw-group"><b>allow</b>{#each raw.allow as r}<code>{r}</code>{/each}</div>
-        <div class="raw-group"><b>ask</b>{#each raw.ask as r}<code>{r}</code>{/each}</div>
-        <div class="raw-group"><b>deny</b>{#each raw.deny as r}<code>{r}</code>{/each}</div>
+        <div class="raw-group"><b class="rk-allow">allow</b>{#each raw.allow as r}<code>{r}</code>{/each}</div>
+        <div class="raw-group"><b class="rk-ask">ask</b>{#each raw.ask as r}<code>{r}</code>{/each}</div>
+        <div class="raw-group"><b class="rk-deny">deny</b>{#each raw.deny as r}<code>{r}</code>{/each}</div>
         <p class="note">= {app.activeScope} scope에 저장될 실제 규칙</p>
       {:else}
         <p class="muted">계산 중…</p>
@@ -79,25 +103,170 @@
 </div>
 
 <style>
-  .panel { display: flex; flex-direction: column; height: 100%; }
-  .tabs { display: flex; border-bottom: 1px solid #1e293b; overflow-x: auto; }
-  .tabs button {
-    padding: 0.5rem 0.7rem; background: none; border: none; border-bottom: 2px solid transparent;
-    color: #94a3b8; cursor: pointer; font-size: 0.8rem; white-space: nowrap;
+  .panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
   }
-  .tabs button.active { color: #e2e8f0; border-bottom-color: #2563eb; }
-  .dot { background: #7f1d1d; color: #fecaca; border-radius: 999px; padding: 0 0.35rem; font-size: 0.65rem; margin-left: 0.25rem; }
-  .body { overflow: auto; padding: 0.5rem; flex: 1; }
-  .row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; padding: 0.15rem 0.2rem; }
-  .row .i { width: 1.1rem; }
-  .row .src { margin-left: auto; color: #64748b; font-size: 0.7rem; }
-  .row.conflict { color: #fca5a5; }
-  .muted { color: #64748b; font-size: 0.85rem; }
-  .raw-group { margin-bottom: 0.6rem; display: flex; flex-direction: column; gap: 0.15rem; }
-  .raw-group b { color: #94a3b8; font-size: 0.75rem; }
-  code { background: #0b1220; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.75rem; }
-  .note { color: #475569; font-size: 0.72rem; }
-  .scope-group { margin-bottom: 0.7rem; }
-  .scope-group b { color: #94a3b8; font-size: 0.75rem; text-transform: capitalize; }
-  .i-allow { color: #4ade80; } .i-deny { color: #f87171; } .i-ask { color: #fbbf24; }
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .tabs button {
+    padding: 0.55rem 0.7rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    transition: color var(--t-fast), border-color var(--t-fast);
+  }
+  .tabs button:hover {
+    color: var(--text-1);
+  }
+  .tabs button.active {
+    color: var(--accent-text);
+    border-bottom-color: var(--accent);
+  }
+  .cnt {
+    background: var(--deny-soft);
+    color: var(--deny);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: 999px;
+    padding: 0 0.38rem;
+    font-size: 0.64rem;
+    font-weight: 700;
+    margin-left: 0.3rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .body {
+    overflow: auto;
+    padding: 0.55rem;
+    flex: 1;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    padding: 0.22rem 0.3rem;
+    border-radius: 4px;
+    min-width: 0;
+  }
+  .row:hover {
+    background: var(--bg-1);
+  }
+  .pd {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .pd-allow {
+    background: var(--allow);
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+  }
+  .pd-deny {
+    background: var(--deny);
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
+  }
+  .pd-ask {
+    background: var(--ask);
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+  }
+  .pd-conflict {
+    background: var(--deny);
+    outline: 2px solid rgba(248, 113, 113, 0.3);
+  }
+  .row .src {
+    margin-left: auto;
+    color: var(--text-3);
+    font-size: 0.68rem;
+    font-family: var(--font-sans);
+    flex-shrink: 0;
+  }
+  .row.conflict {
+    color: var(--deny);
+  }
+  .muted {
+    color: var(--text-3);
+    font-size: 0.85rem;
+  }
+  .pletter {
+    display: inline-grid;
+    place-items: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    font-family: var(--font-sans);
+    flex-shrink: 0;
+  }
+  .l-allow {
+    background: var(--allow-soft);
+    color: var(--allow);
+  }
+  .l-deny {
+    background: var(--deny-soft);
+    color: var(--deny);
+  }
+  .l-ask {
+    background: var(--ask-soft);
+    color: var(--ask);
+  }
+  .raw-group {
+    margin-bottom: 0.7rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .raw-group b {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    width: fit-content;
+    padding: 0.08rem 0.45rem;
+    border-radius: 4px;
+    margin-bottom: 0.15rem;
+  }
+  .rk-allow {
+    background: var(--allow-soft);
+    color: var(--allow);
+  }
+  .rk-ask {
+    background: var(--ask-soft);
+    color: var(--ask);
+  }
+  .rk-deny {
+    background: var(--deny-soft);
+    color: var(--deny);
+  }
+  code {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    padding: 0.18rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.74rem;
+    word-break: break-all;
+  }
+  .note {
+    color: var(--text-3);
+    font-size: 0.72rem;
+  }
+  .scope-group {
+    margin-bottom: 0.8rem;
+  }
+  .scope-group b {
+    display: block;
+    color: var(--text-2);
+    font-size: 0.72rem;
+    text-transform: capitalize;
+    margin-bottom: 0.2rem;
+  }
 </style>

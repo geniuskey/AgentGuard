@@ -51,13 +51,39 @@
     <button
       class="twist"
       class:hidden={!entry.isDir || entry.excluded}
-      aria-label="expand"
+      class:open={expanded}
+      aria-label={expanded ? '접기' : '펼치기'}
       onclick={toggle}
     >
-      {expanded ? '▾' : '▸'}
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+        <path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
     </button>
     <button class="label" onclick={() => (app.selectedPath = entry.path)} ondblclick={toggle}>
-      <span class="icon">{entry.isDir ? '📁' : '📄'}</span>
+      <span class="icon" class:folder={entry.isDir} aria-hidden="true">
+        {#if entry.isDir}
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+            <path
+              d="M1.8 4.2A1.2 1.2 0 0 1 3 3h3l1.4 1.5H13a1.2 1.2 0 0 1 1.2 1.2v6.1A1.2 1.2 0 0 1 13 13H3a1.2 1.2 0 0 1-1.2-1.2V4.2Z"
+              fill="currentColor"
+              fill-opacity="0.25"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linejoin="round"
+            />
+          </svg>
+        {:else}
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+            <path
+              d="M4 1.8h5.2L12.5 5v9.2H4V1.8Z"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linejoin="round"
+            />
+            <path d="M9 2v3.3h3.3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" />
+          </svg>
+        {/if}
+      </span>
       <span class="name" class:dim={entry.excluded}>{entry.name}</span>
       {#if badge.label}
         <span class="badge b-{badge.kind}">{badge.label}</span>
@@ -80,28 +106,117 @@
 
 <style>
   .row {
-    display: flex; align-items: center; gap: 0.2rem; width: 100%;
-    padding: 0.05rem 0.3rem; border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    width: 100%;
+    padding: 0.08rem 0.35rem;
+    border-radius: var(--r-sm);
+    transition: background-color var(--t-fast);
   }
-  .row:hover { background: #1e293b; }
-  .selected > .row { background: #1e3a5f; }
+  .row:hover {
+    background: var(--bg-2);
+  }
+  .selected > .row {
+    background: var(--accent-soft);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
   .twist {
-    width: 1.1rem; color: #64748b; background: none; border: none; cursor: pointer;
-    padding: 0; font-size: 0.8rem;
+    display: grid;
+    place-items: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    color: var(--text-3);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: transform var(--t-fast), color var(--t-fast);
   }
-  .twist.hidden { visibility: hidden; }
+  .twist:hover {
+    color: var(--text-1);
+  }
+  .twist.open {
+    transform: rotate(90deg);
+  }
+  .twist.hidden {
+    visibility: hidden;
+  }
   .label {
-    display: flex; align-items: center; gap: 0.35rem; flex: 1; min-width: 0;
-    background: none; border: none; color: #cbd5e1; cursor: pointer;
-    text-align: left; font-size: 0.85rem; padding: 0.1rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    color: var(--text-1);
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.84rem;
+    padding: 0.14rem 0;
   }
-  .name.dim { color: #475569; font-style: italic; }
-  .children { margin-left: 1rem; border-left: 1px solid #1e293b; padding-left: 0.25rem; }
-  .loading { color: #475569; font-size: 0.8rem; padding-left: 1rem; }
-  .badge { margin-left: auto; font-size: 0.62rem; padding: 0.05rem 0.4rem; border-radius: 999px; font-weight: 700; }
-  .b-allow { background: #14532d; color: #bbf7d0; }
-  .b-deny { background: #7f1d1d; color: #fecaca; }
-  .b-ask { background: #78350f; color: #fde68a; }
-  .b-rec-deny { background: none; color: #f87171; border: 1px dashed #7f1d1d; }
-  .b-rec-allow { background: none; color: #4ade80; border: 1px dashed #14532d; }
+  .icon {
+    display: grid;
+    place-items: center;
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+  .icon.folder {
+    color: #8fb3f9;
+  }
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .name.dim {
+    color: var(--text-3);
+    font-style: italic;
+  }
+  .children {
+    margin-left: 0.95rem;
+    border-left: 1px solid var(--border);
+    padding-left: 0.3rem;
+  }
+  .loading {
+    color: var(--text-3);
+    font-size: 0.8rem;
+    padding-left: 1rem;
+  }
+  .badge {
+    margin-left: auto;
+    font-size: 0.6rem;
+    padding: 0.08rem 0.42rem;
+    border-radius: 999px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+  }
+  .b-allow {
+    background: var(--allow-soft);
+    color: var(--allow);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+  }
+  .b-deny {
+    background: var(--deny-soft);
+    color: var(--deny);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+  }
+  .b-ask {
+    background: var(--ask-soft);
+    color: var(--ask);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+  }
+  .b-rec-deny {
+    background: none;
+    color: var(--deny);
+    border: 1px dashed rgba(248, 113, 113, 0.45);
+  }
+  .b-rec-allow {
+    background: none;
+    color: var(--allow);
+    border: 1px dashed rgba(52, 211, 153, 0.45);
+  }
 </style>

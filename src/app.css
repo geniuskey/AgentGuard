@@ -1,0 +1,226 @@
+/* Agent Guard design tokens & shared chrome. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — deep navy scale, warmest at the top of the stack. */
+  --bg-0: #080c14;
+  --bg-1: #0d1322;
+  --bg-2: #131b2e;
+  --bg-3: #1a2439;
+  --border: #1e2942;
+  --border-strong: #2d3b5c;
+
+  /* Text tiers. */
+  --text-1: #e7edf8;
+  --text-2: #9dabc5;
+  --text-3: #5f6f8f;
+
+  /* Accent. */
+  --accent: #4f8ef7;
+  --accent-strong: #2563eb;
+  --accent-text: #9cc2fd;
+  --accent-soft: rgba(79, 142, 247, 0.13);
+
+  /* Policy colors. */
+  --allow: #34d399;
+  --ask: #fbbf24;
+  --deny: #f87171;
+  --allow-soft: rgba(52, 211, 153, 0.13);
+  --ask-soft: rgba(251, 191, 36, 0.13);
+  --deny-soft: rgba(248, 113, 113, 0.13);
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.65);
+  --glow-accent: 0 0 0 1px rgba(79, 142, 247, 0.35), 0 4px 20px rgba(37, 99, 235, 0.35);
+
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system,
+    'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+
+  --t-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-0);
+  background-image: radial-gradient(1100px 480px at 50% -12%, rgba(59, 130, 246, 0.09), transparent 65%);
+  background-attachment: fixed;
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}
+
+kbd {
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.78em;
+  color: var(--text-2);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(79, 142, 247, 0.35);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent-strong);
+}
+
+select {
+  background: var(--bg-1);
+  color: var(--text-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d4f78;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Shared modal chrome (save-diff, backups, report dialogs). */
+.modal-bg {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 12, 0.62);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  z-index: 50;
+  animation: ag-fade-in 130ms ease-out;
+}
+.modal {
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  padding: 1.15rem 1.35rem 1.25rem;
+  width: min(900px, 95vw);
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: var(--shadow-modal);
+  animation: ag-rise-in 170ms cubic-bezier(0.2, 0, 0, 1);
+}
+.modal h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.modal-actions button {
+  padding: 0.45rem 1rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+  color: var(--text-1);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background-color var(--t-fast), border-color var(--t-fast);
+}
+.modal-actions button:hover {
+  background: var(--bg-3);
+}
+.modal-actions .primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: white;
+}
+.modal-actions .primary:hover {
+  background: #3b76ee;
+}
+.modal-actions .primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Tooltip element created by the `use:tooltip` action (src/lib/tooltip.ts). */
+.ag-tooltip {
+  position: fixed;
+  z-index: 100;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  color: var(--text-1);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.55;
+  font-family: var(--font-sans);
+  text-align: left;
+  padding: 0.45rem 0.65rem;
+  border-radius: 7px;
+  width: max-content;
+  max-width: 300px;
+  white-space: pre-line;
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  animation: ag-fade-in 120ms ease-out;
+}
+
+@keyframes ag-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ag-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

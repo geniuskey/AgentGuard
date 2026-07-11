@@ -5,13 +5,16 @@
 </script>
 
 <main>
-  <button class="back" onclick={back}>← Back</button>
-  <h1>📖 Agent Guard 가이드</h1>
+  <button class="back" onclick={back}>← 뒤로</button>
+  <h1>Agent Guard 가이드</h1>
 
   <section>
     <h2>핵심 개념</h2>
     <ul>
-      <li><b>Allow / Ask / Deny</b> — 에이전트가 경로에 접근할 때 각각 허용 / 확인 후 허용 / 차단합니다.</li>
+      <li>
+        <span class="term"><b class="t-allow">Allow</b> / <b class="t-ask">Ask</b> / <b class="t-deny">Deny</b></span>
+        — 에이전트가 경로에 접근할 때 각각 허용 / 확인 후 허용 / 차단합니다.
+      </li>
       <li><b>Default Deny</b> — 켜면(<code>dontAsk</code>) 명시적으로 Allow한 경로 외에는 모두 차단됩니다. 사내 보안 환경 권장.</li>
       <li><b>Scope</b> — Local &gt; Project &gt; User 순으로 우선하며, <b>Deny는 어느 Scope에서든 최우선</b>입니다.</li>
     </ul>
@@ -47,11 +50,72 @@
 </main>
 
 <style>
-  main { max-width: 760px; margin: 0 auto; padding: 2rem 1.5rem; }
-  .back { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; }
-  h1 { font-size: 1.5rem; margin: 1rem 0; }
-  h2 { font-size: 1.05rem; border-bottom: 1px solid #1e293b; padding-bottom: 0.3rem; margin-top: 1.5rem; }
-  li { margin: 0.3rem 0; line-height: 1.5; }
-  code { background: #0b1220; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
-  kbd { background: #1e293b; border: 1px solid #334155; border-radius: 4px; padding: 0.05rem 0.35rem; font-size: 0.8em; }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 3rem;
+  }
+  .back {
+    background: none;
+    border: 1px solid var(--border-strong);
+    color: var(--text-2);
+    border-radius: var(--r-sm);
+    padding: 0.28rem 0.6rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: color var(--t-fast), background-color var(--t-fast);
+  }
+  .back:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+  h1 {
+    font-size: 1.45rem;
+    letter-spacing: -0.02em;
+    margin: 1.2rem 0 1.4rem;
+  }
+  section {
+    background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.9rem;
+  }
+  h2 {
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+    margin: 0 0 0.6rem;
+  }
+  ul,
+  ol {
+    margin: 0;
+    padding-left: 1.2rem;
+  }
+  li {
+    margin: 0.35rem 0;
+    line-height: 1.6;
+    color: var(--text-1);
+  }
+  li b {
+    color: var(--text-1);
+  }
+  .term .t-allow {
+    color: var(--allow);
+  }
+  .term .t-ask {
+    color: var(--ask);
+  }
+  .term .t-deny {
+    color: var(--deny);
+  }
+  code {
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
 </style>

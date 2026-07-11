@@ -13,9 +13,9 @@ import {
 
 function emptyScoped(): ScopedRulesDto {
   return {
-    user: { rules: [], defaultMode: null },
-    project: { rules: [], defaultMode: null },
-    local: { rules: [], defaultMode: null }
+    user: { rules: [], defaultMode: null, extraDeny: [] },
+    project: { rules: [], defaultMode: null, extraDeny: [] },
+    local: { rules: [], defaultMode: null, extraDeny: [] }
   };
 }
 
@@ -74,6 +74,28 @@ export function clearPolicy(path: string) {
 
 export function setDefaultMode(scope: ScopeName, mode: string | null) {
   app.scoped[scope].defaultMode = mode;
+  app.dirty = true;
+}
+
+/** Upsert a full rule into an explicit scope (one rule per path). */
+export function upsertRule(scope: ScopeName, rule: PolicyRule) {
+  const bucket = app.scoped[scope];
+  const idx = bucket.rules.findIndex((r) => r.path === rule.path);
+  if (idx >= 0) bucket.rules[idx] = rule;
+  else bucket.rules.push(rule);
+  app.dirty = true;
+}
+
+/** Remove the rule for `path` in an explicit scope. */
+export function removeRule(scope: ScopeName, path: string) {
+  const bucket = app.scoped[scope];
+  bucket.rules = bucket.rules.filter((r) => r.path !== path);
+  app.dirty = true;
+}
+
+/** Set the non-path capability denies (web/network block) for a scope. */
+export function setExtraDeny(scope: ScopeName, list: string[]) {
+  app.scoped[scope].extraDeny = list;
   app.dirty = true;
 }
 

@@ -1,0 +1,39 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Agent Guard app icon — the home-screen shield on a dark navy tile.
+       Source for `npx tauri icon app-icon.svg` (regenerates src-tauri/icons). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#161e30" />
+      <stop offset="1" stop-color="#080c14" />
+    </linearGradient>
+    <linearGradient id="shield" x1="304" y1="160" x2="736" y2="880" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#60a5fa" />
+      <stop offset="1" stop-color="#2563eb" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.25" r="0.8">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.30" />
+      <stop offset="1" stop-color="#3b82f6" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="212" fill="url(#bg)" />
+  <rect width="1024" height="1024" rx="212" fill="url(#glow)" />
+  <rect x="7" y="7" width="1010" height="1010" rx="205" stroke="#2d3b5c" stroke-width="10" />
+
+  <g transform="translate(80 80) scale(36)">
+    <path
+      d="M12 2.2 20 5.4v5.7c0 5.4-3.3 9.2-8 10.7-4.7-1.5-8-5.3-8-10.7V5.4l8-3.2Z"
+      fill="url(#shield)"
+      stroke="url(#shield)"
+      stroke-width="0.9"
+      stroke-linejoin="round"
+    />
+    <path
+      d="m8.6 11.8 2.4 2.4 4.4-4.6"
+      stroke="#eef4ff"
+      stroke-width="2.1"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+</svg>
