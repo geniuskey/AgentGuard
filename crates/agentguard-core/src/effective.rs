@@ -70,11 +70,32 @@ fn rule_matches(rule: &PolicyRule, target: &str) -> bool {
 }
 
 /// Fallback decision when no rule matches, based on `defaultMode`.
-fn fallback(default_mode: Option<&str>) -> Policy {
+pub(crate) fn fallback(default_mode: Option<&str>) -> Policy {
     match default_mode {
         Some("dontAsk") => Policy::Deny,
         _ => Policy::Ask, // "default"/acceptEdits/etc. prompt at runtime
     }
+}
+
+/// Every rule (with its scope) matching `target_path`, in Local > Project > User
+/// order. Used by the simulator to show *why* a path got its decision.
+pub fn matching_rules(rules: &ScopedRules, target_path: &str) -> Vec<(Scope, PolicyRule)> {
+    let target = norm(target_path);
+    let mut matched: Vec<(Scope, PolicyRule)> = rules
+        .tagged()
+        .into_iter()
+        .filter(|(_, r)| rule_matches(r, &target))
+        .map(|(s, r)| (s, r.clone()))
+        .collect();
+    fn scope_rank(s: Scope) -> u8 {
+        match s {
+            Scope::Local => 0,
+            Scope::Project => 1,
+            Scope::User => 2,
+        }
+    }
+    matched.sort_by_key(|(s, _)| scope_rank(*s));
+    matched
 }
 
 /// Compute the effective policy for a single `target_path`.

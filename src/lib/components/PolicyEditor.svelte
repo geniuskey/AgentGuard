@@ -1,10 +1,36 @@
 <script lang="ts">
-  import type { AppliesTo, Policy, ScopeName } from '$lib/ipc';
+  import { inTauri, noteIgnoredPath, pathIgnored, type AppliesTo, type Policy, type ScopeName } from '$lib/ipc';
   import { app, clearPolicy, refreshEffective, setPolicy } from '$lib/state.svelte';
 
   let appliesTo = $state<AppliesTo>('folder-and-children');
 
   const target = $derived(app.selectedPath || '(project root)');
+
+  // Git-ignored paths need a heads-up: an Allow rule opens access, but the
+  // agent's Grep search still skips them.
+  let ignored = $state(false);
+  let noteStatus = $state<string | null>(null);
+
+  $effect(() => {
+    const p = app.selectedPath;
+    ignored = false;
+    noteStatus = null;
+    if (!p || !inTauri()) return;
+    pathIgnored(app.projectRoot, p)
+      .then((v) => (ignored = v))
+      .catch(() => {});
+  });
+
+  async function noteInClaudeMd() {
+    try {
+      const added = await noteIgnoredPath(app.projectRoot, app.selectedPath);
+      noteStatus = added
+        ? 'CLAUDE.md에 안내를 추가했습니다 — 에이전트가 이 경로를 인지합니다.'
+        : 'CLAUDE.md에 이미 안내가 있습니다.';
+    } catch (e) {
+      noteStatus = String(e);
+    }
+  }
 
   // The explicit rule currently on this path in the active scope, if any.
   const current = $derived(
@@ -74,6 +100,17 @@
     </button>
     <button class="clear" onclick={clear} disabled={!current}>Clear rule</button>
   </div>
+
+  {#if ignored}
+    <div class="ginote">
+      <b>.gitignore에 포함된 경로입니다.</b> 차단된 것은 아닙니다 —
+      Grep 검색으로는 <b>발견 못 함</b> · 경로를 알면 Read <b>가능</b> · 접근 권한은
+      Allow/Ask/Deny 규칙이 결정. CLAUDE.md에 경로를 알려주면 에이전트가 직접 읽거나
+      <code>rg --no-ignore</code>로 검색할 수 있습니다.
+      <button class="gbtn" onclick={noteInClaudeMd}>CLAUDE.md에 알리기</button>
+      {#if noteStatus}<span class="gstat">{noteStatus}</span>{/if}
+    </div>
+  {/if}
 
   {#if !app.selectedPath}
     <p class="hint">왼쪽 트리에서 파일/폴더를 선택하세요.</p>
@@ -247,5 +284,47 @@
     color: var(--text-3);
     font-size: 0.8rem;
     margin-top: 0.8rem;
+  }
+  .ginote {
+    margin-top: 0.9rem;
+    background: var(--ask-soft);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: var(--r-sm);
+    padding: 0.55rem 0.7rem;
+    font-size: 0.76rem;
+    color: var(--text-2);
+    line-height: 1.55;
+  }
+  .ginote b {
+    color: var(--ask);
+  }
+  .ginote code {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    padding: 0 0.3rem;
+    border-radius: 3px;
+    font-size: 0.72rem;
+  }
+  .gbtn {
+    display: block;
+    margin-top: 0.5rem;
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    color: var(--ask);
+    border-radius: var(--r-sm);
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+    font-size: 0.74rem;
+    font-weight: 600;
+    transition: background-color var(--t-fast);
+  }
+  .gbtn:hover {
+    background: rgba(251, 191, 36, 0.25);
+  }
+  .gstat {
+    display: block;
+    margin-top: 0.4rem;
+    color: var(--accent-text);
+    font-size: 0.72rem;
   }
 </style>

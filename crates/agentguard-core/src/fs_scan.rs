@@ -19,6 +19,10 @@ pub struct DirEntry {
     pub is_dir: bool,
     /// True for entries in [`EXCLUDED_DIRS`] (shown collapsed/dimmed, not expanded).
     pub excluded: bool,
+    /// Matched by the project's top-level `.gitignore` — the agent's Grep search
+    /// won't surface it even when access is allowed.
+    #[serde(default)]
+    pub ignored: bool,
 }
 
 /// List the direct children of `rel_dir` under `project_root` (one level).
@@ -28,6 +32,7 @@ pub fn list_dir(project_root: &Path, rel_dir: &str) -> crate::Result<Vec<DirEntr
     } else {
         project_root.join(rel_dir)
     };
+    let gi = crate::gitignore::matcher(project_root);
     let mut entries = Vec::new();
     for e in std::fs::read_dir(&abs)? {
         let e = e?;
@@ -38,11 +43,16 @@ pub fn list_dir(project_root: &Path, rel_dir: &str) -> crate::Result<Vec<DirEntr
         } else {
             format!("{rel_dir}/{name}")
         };
+        let ignored = gi
+            .as_ref()
+            .map(|g| g.matched_path_or_any_parents(e.path(), is_dir).is_ignore())
+            .unwrap_or(false);
         entries.push(DirEntry {
             path: rel,
             name: name.clone(),
             is_dir,
             excluded: is_dir && EXCLUDED_DIRS.contains(&name.as_str()),
+            ignored,
         });
     }
     // Directories first, then files; each alphabetical.
@@ -189,6 +199,22 @@ mod tests {
         let nm = entries.iter().find(|e| e.name == "node_modules").unwrap();
         assert!(nm.excluded);
         assert!(entries.iter().any(|e| e.name == "README.md" && !e.is_dir));
+    }
+
+    #[test]
+    fn list_dir_flags_gitignored_entries() {
+        let root = tmp();
+        fs::write(root.join(".gitignore"), "dist/\n.env\n").unwrap();
+        fs::create_dir_all(root.join("dist")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join(".env"), "X=1").unwrap();
+
+        let entries = list_dir(&root, "").unwrap();
+        let get = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+        assert!(get("dist").ignored);
+        assert!(get(".env").ignored);
+        assert!(!get("src").ignored);
+        assert!(!get(".gitignore").ignored);
     }
 
     #[test]

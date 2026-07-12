@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Signals detected in a project, fed into [`score`]. Each flag contributes at most once.
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct RiskSignals {
     pub has_env: bool,
     pub has_secrets_dir: bool,
@@ -18,6 +18,11 @@ pub struct RiskSignals {
     pub missing_local_settings: bool,
     /// Effective policy is essentially unrestricted (root allow, no deny/ask, not dontAsk).
     pub all_paths_allowed: bool,
+    /// Hooks are configured in any scope (they run arbitrary shell commands
+    /// outside the permission rules).
+    pub has_hooks: bool,
+    /// MCP servers are configured (they operate outside the file-permission model).
+    pub has_mcp_servers: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +60,12 @@ pub fn score(s: &RiskSignals) -> RiskScore {
     }
     if s.all_paths_allowed {
         score += 50;
+    }
+    if s.has_hooks {
+        score += 15;
+    }
+    if s.has_mcp_servers {
+        score += 10;
     }
     let score = score.min(100);
     RiskScore {
@@ -105,6 +116,18 @@ mod tests {
         assert_eq!(grade(21), RiskLevel::Medium);
         assert_eq!(grade(60), RiskLevel::Medium);
         assert_eq!(grade(61), RiskLevel::High);
+    }
+
+    #[test]
+    fn hooks_and_mcp_add_risk() {
+        let s = RiskSignals {
+            has_hooks: true,
+            has_mcp_servers: true,
+            ..Default::default()
+        };
+        let r = score(&s);
+        assert_eq!(r.score, 25);
+        assert_eq!(r.level, RiskLevel::Medium);
     }
 
     #[test]

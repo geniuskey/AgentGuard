@@ -17,4 +17,5 @@ thiserror.workspace = true
 uuid.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 globset = "0.4"
+ignore = "0.4"
 directories = "5"

@@ -32,6 +32,23 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
+/** The concrete pattern a rule matches, expanding its `appliesTo` form. */
+export function rulePattern(r: PolicyRule): string {
+  switch (r.appliesTo) {
+    case 'folder-and-children':
+      return r.path + '/**';
+    case 'folder':
+      return r.path + '/*';
+    default:
+      return r.path;
+  }
+}
+
+/** Does `r` cover `target` (the rule's own path always matches itself)? */
+export function matchesRule(r: PolicyRule, target: string): boolean {
+  return r.path === target || ruleMatches(rulePattern(r), target);
+}
+
 /** Does a rule pattern cover a target pattern base (folder itself included)? */
 export function ruleMatches(rulePath: string, target: string): boolean {
   // `//**/X` means "X anywhere on any drive" — home paths included, so match
@@ -51,16 +68,18 @@ export function ruleMatches(rulePath: string, target: string): boolean {
 }
 
 /**
- * Effective display state for one path: deny rules win, then allow, then ask;
- * with no match the default mode decides (Default Deny → blocked).
+ * Effective display state for one path: deny > ask > allow (mirrors the
+ * authoritative merge in effective.rs); with no match the default mode decides
+ * (Default Deny → blocked). Rules' `appliesTo` forms are expanded, so children
+ * inherit folder rules.
  */
 export function effectiveDisplay(
   rules: PolicyRule[],
   defaultMode: string | null,
   target: string
 ): EffectiveDisplay {
-  for (const policy of ['deny', 'allow', 'ask'] as const) {
-    const hit = rules.find((r) => r.policy === policy && ruleMatches(r.path, target));
+  for (const policy of ['deny', 'ask', 'allow'] as const) {
+    const hit = rules.find((r) => r.policy === policy && matchesRule(r, target));
     if (hit) return { state: policy, source: hit.path };
   }
   return defaultMode === 'dontAsk'

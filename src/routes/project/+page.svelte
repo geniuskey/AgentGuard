@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import {
     addLocalToGitignore,
@@ -10,12 +10,15 @@
     importTemplate,
     listBackups,
     loadSettings,
+    onSettingsFileChanged,
     policyReport,
     previewBackup,
     restoreBackup,
     saveReportFile,
     saveSettings,
     scanRecommendationRules,
+    unwatchProject,
+    watchProject,
     type BackupRecord,
     type DiffView,
     type GitignoreStatus,
@@ -40,6 +43,43 @@
   let backupPreview = $state<{ rec: BackupRecord; text: string } | null>(null);
   let report = $state<string | null>(null);
 
+  // External-change detection: watch the settings files while the page is open.
+  let externalChange = $state<string | null>(null);
+  let lastSaveAt = 0;
+  let unlisten: (() => void) | null = null;
+  let changeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function onExternalChange(path: string) {
+    if (Date.now() - lastSaveAt < 2500) return; // our own write
+    clearTimeout(changeTimer);
+    // Editors fire several fs events per save — debounce into one reaction.
+    changeTimer = setTimeout(async () => {
+      if (app.dirty) {
+        externalChange = path;
+        return;
+      }
+      try {
+        app.scoped = await loadSettings(app.projectRoot);
+        await refreshEffective();
+        status = '설정 파일이 외부에서 변경되어 다시 불러왔습니다.';
+      } catch (e) {
+        error = String(e);
+      }
+    }, 400);
+  }
+
+  async function reloadFromDisk() {
+    try {
+      app.scoped = await loadSettings(app.projectRoot);
+      app.dirty = false;
+      await refreshEffective();
+      externalChange = null;
+      status = '디스크의 설정을 다시 불러왔습니다.';
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   onMount(async () => {
     if (!app.loaded) {
       goto('/');
@@ -50,6 +90,18 @@
     } catch {
       /* non-fatal */
     }
+    try {
+      await watchProject(app.projectRoot);
+      unlisten = await onSettingsFileChanged(onExternalChange);
+    } catch {
+      /* watcher is best-effort */
+    }
+  });
+
+  onDestroy(() => {
+    clearTimeout(changeTimer);
+    unlisten?.();
+    unwatchProject().catch(() => {});
   });
 
   const dontAsk = $derived(app.scoped[app.activeScope].defaultMode === 'dontAsk');
@@ -102,6 +154,7 @@
   async function confirmSave() {
     if (!diff) return;
     saving = true;
+    lastSaveAt = Date.now();
     try {
       await saveSettings({
         projectRoot: app.projectRoot,
@@ -110,8 +163,11 @@
         scopeRules: app.scoped[saveScope],
         projectName: app.projectName
       });
+      lastSaveAt = Date.now();
       app.dirty = false;
       diff = null;
+      // Re-watch: the save may have created .claude/ dirs that weren't watchable before.
+      watchProject(app.projectRoot).catch(() => {});
     } catch (e) {
       error = String(e);
     } finally {
@@ -133,6 +189,7 @@
 
   async function doRestore(rec: BackupRecord) {
     try {
+      lastSaveAt = Date.now();
       await restoreBackup(rec.backupPath, rec.originalPath);
       backupPreview = null;
       backups = null;
@@ -268,6 +325,20 @@
         위험).
       </span>
       <button onclick={fixGitignore}>.gitignore에 추가</button>
+    </div>
+  {/if}
+
+  {#if externalChange}
+    <div class="banner">
+      <span class="banner-icon" aria-hidden="true">⚠</span>
+      <span>
+        설정 파일이 <b>외부에서 변경</b>되었습니다: <code>{externalChange}</code> — 저장하지 않은
+        편집과 충돌할 수 있습니다.
+      </span>
+      <span class="banner-actions">
+        <button onclick={reloadFromDisk}>다시 불러오기 (내 변경 폐기)</button>
+        <button onclick={() => (externalChange = null)}>무시</button>
+      </span>
     </div>
   {/if}
 
@@ -454,6 +525,13 @@
     gap: 0.35rem;
     white-space: nowrap;
   }
+  /* Protection toggle: checked = safer, so it reads green. */
+  .dd input {
+    accent-color: var(--allow);
+  }
+  .dd:has(input:checked) {
+    color: var(--allow);
+  }
   .dd-scope {
     font-size: 0.66rem;
     color: var(--accent-text);
@@ -496,7 +574,7 @@
   .banner {
     background: var(--ask-soft);
     border-bottom: 1px solid rgba(251, 191, 36, 0.25);
-    color: #fde68a;
+    color: var(--ask);
     padding: 0.45rem 0.8rem;
     font-size: 0.8rem;
     display: flex;
@@ -516,7 +594,7 @@
     margin-left: auto;
     background: rgba(251, 191, 36, 0.15);
     border: 1px solid rgba(251, 191, 36, 0.35);
-    color: #fde68a;
+    color: var(--ask);
     border-radius: var(--r-sm);
     padding: 0.25rem 0.65rem;
     cursor: pointer;
@@ -525,6 +603,16 @@
   }
   .banner button:hover {
     background: rgba(251, 191, 36, 0.25);
+  }
+  .banner-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+  .banner-actions button {
+    margin-left: 0;
+    white-space: nowrap;
   }
   .err {
     background: var(--deny-soft);

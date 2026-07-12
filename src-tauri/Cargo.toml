@@ -22,7 +22,8 @@ uuid.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-toml = "0.8"
+toml = { version = "0.8", features = ["preserve_order"] }
+notify = "6"
 
 [features]
 # Enabled by tauri when building via the CLI; harmless otherwise.

@@ -1,16 +1,19 @@
 <script lang="ts">
-  // Raw config editor for a single agent global file (JSON or TOML). Validates by
-  // format before saving, shows a pre-save diff, and always backs up first. Used for
-  // agents without a structured editor (Codex, OpenCode); Claude Code uses /user.
-  import type { AgentGlobal, DiffView } from '$lib/ipc';
+  // Config editor for a single agent global file (JSON or TOML): a structured
+  // settings form (AgentSettingsForm) plus a raw text view over the same text state.
+  // Validates by format before saving, shows a pre-save diff, and always backs up
+  // first. Used for Codex/OpenCode; Claude Code's permission editor lives at /user.
+  import type { AgentGlobal, AgentSecItem, DiffView } from '$lib/ipc';
   import {
+    agentSecurityStatus,
     inTauri,
-    intranetRecommendation,
     readAgentConfig,
     saveAgentConfig,
+    securityBaseline,
     validateConfig
   } from '$lib/ipc';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
+  import AgentSettingsForm from '$lib/components/AgentSettingsForm.svelte';
 
   let { agent }: { agent: AgentGlobal } = $props();
 
@@ -21,6 +24,23 @@
   let error = $state<string | null>(null);
   let status = $state<string | null>(null);
   let diff = $state<DiffView | null>(null);
+  let secItems = $state<AgentSecItem[] | null>(null);
+  let view = $state<'form' | 'raw'>('form');
+
+  // Security summary of the editor text (debounced; hidden while unparseable).
+  $effect(() => {
+    const current = text;
+    const id = agent.id;
+    if (!inTauri()) return;
+    const t = setTimeout(async () => {
+      try {
+        secItems = await agentSecurityStatus(id, current);
+      } catch {
+        secItems = null;
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  });
 
   async function load() {
     if (!inTauri()) return;
@@ -73,12 +93,12 @@
     diff = { path: agent.path, before: onDisk, after: text, changed: onDisk !== text };
   }
 
-  // Merge this agent's intranet security baseline into the editor for review.
-  async function applyIntranet() {
+  // Merge this agent's security baseline into the editor for review.
+  async function applyBaseline() {
     error = null;
     try {
-      text = await intranetRecommendation(agent.id, text);
-      status = '인트라넷 추천 보안 셋을 적용했습니다. 검토 후 저장하세요.';
+      text = await securityBaseline(agent.id, text);
+      status = '보안 베이스라인을 추가했습니다. 검토 후 저장하세요.';
     } catch (e) {
       error = String(e);
     }
@@ -109,10 +129,15 @@
 
 <div class="panel">
   <div class="bar">
-    <span class="fmt">{agent.format.toUpperCase()}</span>
+    <span class="views">
+      <button class:active={view === 'form'} onclick={() => (view = 'form')}>설정</button>
+      <button class:active={view === 'raw'} onclick={() => (view = 'raw')}>
+        Raw {agent.format.toUpperCase()}
+      </button>
+    </span>
     <div class="tools">
-      <button class="rec" onclick={applyIntranet} title="이 에이전트의 인트라넷 보안 베이스라인을 병합">
-        인트라넷 추천
+      <button class="rec" onclick={applyBaseline} title="권장 보안 설정(공유·웹·자격증명 차단)을 현재 설정에 병합">
+        보안 베이스라인
       </button>
       <button onclick={validate}>Validate</button>
       {#if agent.format === 'json'}<button onclick={format}>Format</button>{/if}
@@ -126,8 +151,25 @@
     <p class="new">이 파일은 아직 없습니다. 저장하면 새로 생성됩니다.</p>
   {/if}
 
+  {#if secItems}
+    <div class="sec" aria-label="보안 설정 요약">
+      {#each secItems as it (it.label)}
+        <span
+          class="sec-item"
+          class:safe={it.ok === true}
+          class:warn={it.ok === false}
+          title={it.ok === false ? '주의가 필요한 설정입니다' : undefined}
+        >
+          {it.label} <b>{it.value}</b>
+        </span>
+      {/each}
+    </div>
+  {/if}
+
   {#if loading}
     <p class="muted">불러오는 중…</p>
+  {:else if view === 'form'}
+    <AgentSettingsForm agentId={agent.id} format={agent.format} {text} onchange={(t) => (text = t)} />
   {:else}
     <textarea bind:value={text} spellcheck="false" placeholder={agent.format === 'toml' ? '# TOML' : '{}'}></textarea>
   {/if}
@@ -167,15 +209,25 @@
     gap: 0.5rem;
     margin-bottom: 0.5rem;
   }
-  .fmt {
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    color: var(--accent-text);
+  .views {
+    display: flex;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+  }
+  .views button {
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+    font-size: 0.76rem;
+    white-space: nowrap;
+    transition: background-color var(--t-fast), color var(--t-fast);
+  }
+  .views button.active {
     background: var(--accent-soft);
-    border: 1px solid rgba(79, 142, 247, 0.3);
-    border-radius: 999px;
-    padding: 0.08rem 0.6rem;
+    color: var(--accent-text);
   }
   .tools {
     display: flex;
@@ -195,13 +247,48 @@
     background: var(--bg-3);
   }
   .tools .rec {
-    background: var(--deny-soft);
-    border-color: rgba(248, 113, 113, 0.35);
-    color: var(--deny);
+    background: var(--allow-soft);
+    border-color: rgba(52, 211, 153, 0.35);
+    color: var(--allow);
     font-weight: 600;
   }
   .tools .rec:hover {
-    background: rgba(248, 113, 113, 0.22);
+    background: rgba(52, 211, 153, 0.22);
+  }
+  .sec {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-bottom: 0.5rem;
+  }
+  .sec-item {
+    font-size: 0.7rem;
+    color: var(--text-3);
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.12rem 0.55rem;
+    white-space: nowrap;
+  }
+  .sec-item b {
+    color: var(--text-2);
+    font-weight: 600;
+  }
+  .sec-item.safe {
+    color: var(--allow);
+    background: var(--allow-soft);
+    border-color: rgba(52, 211, 153, 0.3);
+  }
+  .sec-item.safe b {
+    color: inherit;
+  }
+  .sec-item.warn {
+    color: var(--ask);
+    background: var(--ask-soft);
+    border-color: rgba(251, 191, 36, 0.35);
+  }
+  .sec-item.warn b {
+    color: inherit;
   }
   .tools .primary {
     background: var(--bg-2);

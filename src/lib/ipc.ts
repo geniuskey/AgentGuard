@@ -42,6 +42,8 @@ export interface DirEntry {
   name: string;
   isDir: boolean;
   excluded: boolean;
+  /** Matched by the project's .gitignore — invisible to the agent's Grep search. */
+  ignored: boolean;
 }
 
 export interface ScanResult {
@@ -290,6 +292,19 @@ export async function addLocalToGitignore(projectRoot: string): Promise<boolean>
   return invoke<boolean>('add_local_to_gitignore', { projectRoot });
 }
 
+/** Is this path matched by the project's top-level .gitignore? */
+export async function pathIgnored(projectRoot: string, relPath: string): Promise<boolean> {
+  return invoke<boolean>('path_ignored', { projectRoot, relPath });
+}
+
+/**
+ * Note an accessible git-ignored path in CLAUDE.md (read by explicit path /
+ * `rg --no-ignore`). Returns false when the note already exists.
+ */
+export async function noteIgnoredPath(projectRoot: string, relPath: string): Promise<boolean> {
+  return invoke<boolean>('note_ignored_path', { projectRoot, relPath });
+}
+
 export async function policyReport(args: {
   projectName: string;
   profile: string | null;
@@ -406,18 +421,129 @@ export async function listSystemDir(path: string): Promise<SystemEntry[]> {
   return invoke<SystemEntry[]>('list_system_dir', { path });
 }
 
-/** Claude Code intranet baseline as neutral Deny rules. */
-export async function intranetRecommendationRules(): Promise<PolicyRule[]> {
-  return invoke<PolicyRule[]>('intranet_recommendation_rules');
+/** Claude Code security baseline as neutral Deny rules. */
+export async function securityBaselineRules(): Promise<PolicyRule[]> {
+  return invoke<PolicyRule[]>('security_baseline_rules');
 }
 
-/** Merge an agent's intranet security baseline into its current config text (Codex/OpenCode). */
-export async function intranetRecommendation(agentId: string, currentText: string): Promise<string> {
-  return invoke<string>('intranet_recommendation', { agentId, currentText });
+/** Merge an agent's security baseline into its current config text (Codex/OpenCode). */
+export async function securityBaseline(agentId: string, currentText: string): Promise<string> {
+  return invoke<string>('security_baseline', { agentId, currentText });
+}
+
+/** One security-relevant setting parsed from an agent config. */
+export interface AgentSecItem {
+  label: string;
+  value: string;
+  /** true = 안전, false = 주의, null = 정보성 */
+  ok: boolean | null;
+}
+
+/** Security summary of an agent config text (Codex/OpenCode). Throws on parse errors. */
+export async function agentSecurityStatus(agentId: string, text: string): Promise<AgentSecItem[]> {
+  return invoke<AgentSecItem[]>('agent_security_status', { agentId, text });
+}
+
+/** Parse an agent config text (JSON or TOML) into a plain JSON tree. */
+export async function configGet(text: string, format: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('config_get', { text, format });
+}
+
+/**
+ * Set one dotted-path key in a config text (null removes the key, pruning empty
+ * parents). Returns the new full text; all other keys are preserved.
+ */
+export async function configSetValue(
+  text: string,
+  format: string,
+  path: string,
+  value: unknown
+): Promise<string> {
+  return invoke<string>('config_set_value', { text, format, path, value: value ?? null });
 }
 
 /** The web/network deny specifiers a "block web access" toggle applies (Claude Code). */
 export async function webBlockSpecifiers(): Promise<string[]> {
   if (!inTauri()) return ['WebSearch', 'WebFetch', 'Bash(curl:*)', 'Bash(wget:*)'];
   return invoke<string[]>('web_block_specifiers');
+}
+
+// --- Policy simulator ---------------------------------------------------------
+
+export interface SimMatch {
+  scope: ScopeName;
+  list: Policy;
+  rule: string;
+  decisive: boolean;
+}
+
+export interface SimResult {
+  query: string;
+  kind: 'path' | 'command';
+  decision: Policy;
+  matches: SimMatch[];
+  fallback: boolean;
+  defaultMode: string | null;
+}
+
+/**
+ * Simulate a query. `path` evaluates the current editor rules (unsaved edits
+ * included); `command` evaluates the saved settings files' Bash rules.
+ */
+export async function simulateAccess(
+  projectRoot: string,
+  scoped: ScopedRulesDto,
+  query: string,
+  kind: 'path' | 'command'
+): Promise<SimResult> {
+  return invoke<SimResult>('simulate_access', { projectRoot, scoped, query, kind });
+}
+
+// --- Agent surface: hooks & MCP servers ----------------------------------------
+
+export interface HookEntry {
+  scope: ScopeName;
+  event: string;
+  matcher: string | null;
+  command: string;
+}
+
+export interface McpServer {
+  name: string;
+  source: string;
+  transport: string;
+  target: string;
+  /** Likely talks to the internet (remote transport or web-fetching stdio server). */
+  usesWeb: boolean;
+}
+
+export interface AgentSurface {
+  hooks: HookEntry[];
+  mcpServers: McpServer[];
+}
+
+export async function inspectAgentSurface(projectRoot: string): Promise<AgentSurface> {
+  if (!inTauri()) return { hooks: [], mcpServers: [] };
+  return invoke<AgentSurface>('inspect_agent_surface', { projectRoot });
+}
+
+// --- External-change watcher ----------------------------------------------------
+
+export async function watchProject(projectRoot: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>('watch_project', { projectRoot });
+}
+
+export async function unwatchProject(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>('unwatch_project');
+}
+
+/** Subscribe to settings-file change events; returns an unlisten function. */
+export async function onSettingsFileChanged(
+  cb: (path: string) => void
+): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<string>('settings-file-changed', (e) => cb(e.payload));
 }

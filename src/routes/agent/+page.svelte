@@ -20,9 +20,9 @@
     if (!inTauri()) return;
     getAgentGlobal(currentId)
       .then((a) => {
-        // Claude Code has a structured editor — send it there instead.
-        if (a.structured) {
-          goto('/user');
+        // Agents with a dedicated route (Claude Code → /user) go there instead.
+        if (!a.route.startsWith('/agent')) {
+          goto(a.route);
           return;
         }
         agent = a;

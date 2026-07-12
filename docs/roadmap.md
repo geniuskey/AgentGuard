@@ -17,6 +17,7 @@
 | 4 Should-have | ✅ 완료 | Bedrock/Env 화면·gitignore 추천 |
 | 5 패키징 | 🟡 부분 | 아이콘 세트·번들 설정 완료. MSI/NSIS 빌드·서명은 Windows+정책(#4/#5) |
 | Could-have | ✅ 완료 | Markdown 리포트·정책 템플릿 Import/Export·인앱 가이드·키보드 단축키·Dark mode(기본) |
+| 후속 (2026-07-12) | ✅ 완료 | 정책 시뮬레이터(경로/Bash)·MCP/Hooks 가시화(+리스크 반영, 웹 접근 MCP 경고)·외부 변경 감지(워처)·에이전트 보안 상태 요약·보안 베이스라인(구 "인트라넷 추천") OpenCode 보강 |
 
 > **Monaco 노트**: Raw JSON 탭은 현재 경량 textarea 에디터(validate/format/save 완비)다.
 > 문서상 선택지인 Monaco는 헤드리스 환경에서 렌더링 검증 불가 + CSP `worker-src` 튜닝이

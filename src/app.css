@@ -46,6 +46,40 @@
   --t-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* Light theme — same token contract, inverted surfaces, deeper policy hues
+   so allow/ask/deny keep contrast on light backgrounds. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-0: #f4f6fb;
+  --bg-1: #ffffff;
+  --bg-2: #edf1f8;
+  --bg-3: #e2e8f3;
+  --border: #d9e0ec;
+  --border-strong: #b6c2d8;
+
+  --text-1: #16213a;
+  --text-2: #44536f;
+  --text-3: #77869f;
+
+  --accent: #2563eb;
+  --accent-strong: #2563eb;
+  --accent-text: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+
+  --allow: #047857;
+  --ask: #b45309;
+  --deny: #dc2626;
+  --allow-soft: rgba(4, 120, 87, 0.1);
+  --ask-soft: rgba(180, 83, 9, 0.1);
+  --deny-soft: rgba(220, 38, 38, 0.08);
+
+  --shadow-1: 0 1px 2px rgba(23, 37, 66, 0.08);
+  --shadow-2: 0 10px 30px rgba(23, 37, 66, 0.12);
+  --shadow-modal: 0 24px 70px rgba(23, 37, 66, 0.25);
+  --glow-accent: 0 0 0 1px rgba(37, 99, 235, 0.3), 0 4px 20px rgba(37, 99, 235, 0.18);
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -54,6 +88,10 @@ body {
   background-attachment: fixed;
   color: var(--text-1);
   -webkit-font-smoothing: antialiased;
+}
+
+:root[data-theme='light'] body {
+  background-image: radial-gradient(1100px 480px at 50% -12%, rgba(37, 99, 235, 0.07), transparent 65%);
 }
 
 button,
@@ -117,11 +155,17 @@ select {
   border: 2px solid transparent;
   background-clip: padding-box;
 }
+:root[data-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: #94a6c4;
+}
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 /* Shared modal chrome (save-diff, backups, report dialogs). */
+:root[data-theme='light'] .modal-bg {
+  background: rgba(23, 37, 66, 0.35);
+}
 .modal-bg {
   position: fixed;
   inset: 0;

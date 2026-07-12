@@ -1,8 +1,10 @@
 <script lang="ts">
   import { toSettingsPreview, type Permissions } from '$lib/ipc';
   import { app } from '$lib/state.svelte';
+  import PolicySimulator from './PolicySimulator.svelte';
+  import AgentSurface from './AgentSurface.svelte';
 
-  type Tab = 'allowed' | 'denied' | 'ask' | 'conflicts' | 'byscope' | 'raw';
+  type Tab = 'allowed' | 'denied' | 'ask' | 'conflicts' | 'byscope' | 'raw' | 'simulate' | 'surface';
   let tab = $state<Tab>('allowed');
 
   const allowed = $derived(app.effective.filter((e) => e.effective === 'allow'));
@@ -31,7 +33,9 @@
     { id: 'ask', label: 'Ask' },
     { id: 'conflicts', label: 'Conflicts' },
     { id: 'byscope', label: 'By Scope' },
-    { id: 'raw', label: 'Raw Rules' }
+    { id: 'raw', label: 'Raw Rules' },
+    { id: 'simulate', label: 'Simulator' },
+    { id: 'surface', label: 'MCP/Hooks' }
   ];
 </script>
 
@@ -45,6 +49,11 @@
     {/each}
   </div>
 
+  {#if tab === 'simulate'}
+    <PolicySimulator />
+  {:else if tab === 'surface'}
+    <AgentSurface />
+  {:else}
   <div class="body">
     {#if tab === 'allowed'}
       {#each allowed as e (e.path)}
@@ -100,6 +109,7 @@
       {/if}
     {/if}
   </div>
+  {/if}
 </div>
 
 <style>

@@ -8,9 +8,9 @@
   import type { AppliesTo, Permissions, Policy, PolicyRule, ScopeName } from '$lib/ipc';
   import {
     homeRelativePattern,
-    intranetRecommendationRules,
     inTauri,
     pickFolder,
+    securityBaselineRules,
     toSettingsPreview,
     webBlockSpecifiers
   } from '$lib/ipc';
@@ -35,7 +35,7 @@
   let status = $state<string | null>(null);
   let error = $state<string | null>(null);
   let webSet = $state<string[]>([]);
-  let intranetSet = $state<PolicyRule[]>([]);
+  let baselineSet = $state<PolicyRule[]>([]);
   let collapsed = $state(new Set<string>());
 
   onMount(async () => {
@@ -45,7 +45,7 @@
       /* ignore */
     }
     try {
-      if (inTauri()) intranetSet = await intranetRecommendationRules();
+      if (inTauri()) baselineSet = await securityBaselineRules();
     } catch {
       /* ignore */
     }
@@ -62,10 +62,10 @@
     deny: rules.filter((r) => r.policy === 'deny').length
   });
 
-  // The intranet baseline counts as "applied" when every one of its deny rules exists.
-  const intranetApplied = $derived(
-    intranetSet.length > 0 &&
-      intranetSet.every((ir) => rules.some((r) => r.path === ir.path && r.policy === 'deny'))
+  // The security baseline counts as "applied" when every one of its deny rules exists.
+  const baselineApplied = $derived(
+    baselineSet.length > 0 &&
+      baselineSet.every((ir) => rules.some((r) => r.path === ir.path && r.policy === 'deny'))
   );
 
   // --- Path hierarchy -------------------------------------------------------
@@ -236,14 +236,14 @@
       : '웹 검색·외부 네트워크 차단을 추가했습니다 (저장 시 적용).';
   }
 
-  // Apply the intranet recommended Deny baseline (SSH/cloud creds, keys, .env, …).
-  async function applyIntranet() {
+  // Apply the security baseline Deny rules (SSH/cloud creds, keys, .env, …).
+  async function applyBaseline() {
     error = null;
     try {
-      const rules = await intranetRecommendationRules();
+      const rules = await securityBaselineRules();
       mergeRules(scope, rules);
       await refreshEffective();
-      status = `인트라넷 추천 Deny ${rules.length}개를 추가했습니다. 저장 전에 검토하세요.`;
+      status = `보안 베이스라인 Deny ${rules.length}개를 추가했습니다. 저장 전에 검토하세요.`;
     } catch (e) {
       error = String(e);
     }
@@ -331,8 +331,8 @@
       <span class="ov-dot d-deny" aria-hidden="true"></span>Deny <b>{counts.deny}</b>
     </span>
     <span class="ov-sep" aria-hidden="true"></span>
-    <button class="ov ov-toggle" class:on={dontAsk} onclick={toggleDeny} title="명시적으로 허용한 것만 접근 가능">
-      <span class="ov-dot" class:d-deny={dontAsk} aria-hidden="true"></span>
+    <button class="ov ov-toggle" class:on={dontAsk} onclick={toggleDeny} title="명시적으로 허용한 것만 접근 가능 — 켜짐(녹색) = 보호 활성">
+      <span class="ov-dot" class:d-guard={dontAsk} aria-hidden="true"></span>
       Default Deny <b>{dontAsk ? 'ON' : 'OFF'}</b>
     </button>
     <button
@@ -341,15 +341,9 @@
       onclick={toggleWebBlock}
       title="WebSearch·WebFetch·curl·wget 차단 — 프롬프트/데이터 외부 유출 방지"
     >
-      <span class="ov-dot" class:d-deny={webBlocked} aria-hidden="true"></span>
+      <span class="ov-dot" class:d-guard={webBlocked} aria-hidden="true"></span>
       웹·네트워크 차단 <b>{webBlocked ? 'ON' : 'OFF'}</b>
     </button>
-    {#if intranetSet.length}
-      <span class="ov" class:on={intranetApplied}>
-        <span class="ov-dot" class:d-deny={intranetApplied} aria-hidden="true"></span>
-        인트라넷 추천 <b>{intranetApplied ? '적용됨' : '미적용'}</b>
-      </span>
-    {/if}
   </div>
 
   <div class="toolbar">
@@ -361,12 +355,12 @@
     </button>
     <button
       class="rec-btn"
-      class:applied={intranetApplied}
-      onclick={applyIntranet}
-      disabled={intranetApplied}
-      title="민감 자격증명/키/.env 등을 일괄 Deny"
+      class:applied={baselineApplied}
+      onclick={applyBaseline}
+      disabled={baselineApplied}
+      title="민감 자격증명/키/.env/시스템 경로를 일괄 Deny"
     >
-      {intranetApplied ? '✓ 인트라넷 추천 적용됨' : '인트라넷 추천 Deny'}
+      {baselineApplied ? '✓ 보안 베이스라인 추가됨' : '보안 베이스라인 추가'}
     </button>
   </div>
 
@@ -522,6 +516,15 @@
     background: var(--deny);
     border-color: var(--deny);
     box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
+  }
+  /* Protection toggles read green when active: ON = safer, not "danger". */
+  .ov.on .ov-dot.d-guard {
+    background: var(--allow);
+    border-color: var(--allow);
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+  }
+  .ov.on:has(.d-guard) {
+    color: var(--allow);
   }
   .ov-sep {
     width: 1px;

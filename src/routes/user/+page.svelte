@@ -94,11 +94,18 @@
       <button class:active={mode === 'raw'} onclick={() => setMode('raw')}>Raw JSON</button>
     </div>
 
-    {#if mode === 'rules'}
-      <button class="save" class:dirty={app.dirty} onclick={openSaveDialog} disabled={!app.dirty}>
-        {#if app.dirty}<span class="save-dot" aria-hidden="true"></span>저장…{:else}저장됨{/if}
-      </button>
-    {/if}
+    <!-- Raw 모드에선 에디터 자체 저장 버튼을 쓰지만, 자리는 유지해 토글이 밀리지 않게 한다. -->
+    <button
+      class="save"
+      class:dirty={app.dirty}
+      class:ghost={mode !== 'rules'}
+      onclick={openSaveDialog}
+      disabled={mode !== 'rules' || !app.dirty}
+      aria-hidden={mode !== 'rules'}
+      tabindex={mode !== 'rules' ? -1 : 0}
+    >
+      {#if app.dirty}<span class="save-dot" aria-hidden="true"></span>저장…{:else}저장됨{/if}
+    </button>
   </div>
 
   <p class="tagline">
@@ -211,7 +218,9 @@
   .save {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.4rem;
+    min-width: 5.4rem;
     background: var(--bg-2);
     border: 1px solid var(--border);
     color: var(--text-3);
@@ -221,6 +230,9 @@
     font-size: 0.84rem;
     cursor: default;
     transition: background-color var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
+  }
+  .save.ghost {
+    visibility: hidden;
   }
   .save.dirty {
     background: linear-gradient(180deg, #3b82f6, #2563eb);

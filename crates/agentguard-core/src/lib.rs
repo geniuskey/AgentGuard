@@ -13,6 +13,7 @@ pub mod effective;
 pub mod env;
 pub mod fs_scan;
 pub mod gitignore;
+pub mod inspect;
 pub mod model;
 pub mod paths;
 pub mod policy;
@@ -20,6 +21,7 @@ pub mod profiles;
 pub mod report;
 pub mod risk;
 pub mod settings;
+pub mod simulate;
 
 pub use model::{AppliesTo, Policy, PolicyRule, Scope, Tool, FILE_ACCESS_TOOLS};
 

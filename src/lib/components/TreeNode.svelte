@@ -1,6 +1,7 @@
 <script lang="ts">
   import { listDir, type DirEntry } from '$lib/ipc';
   import { app } from '$lib/state.svelte';
+  import { effectiveDisplay } from '$lib/match';
   import Self from './TreeNode.svelte';
 
   let { entry }: { entry: DirEntry } = $props();
@@ -44,6 +45,17 @@
   });
 
   const selected = $derived(app.selectedPath === entry.path);
+
+  // Effective access coloring: all scopes' rules merged (deny > ask > allow),
+  // with folder rules inherited by children — same convention as the system
+  // explorer. Excluded dirs keep their dimmed style instead.
+  const eff = $derived.by(() => {
+    if (entry.excluded) return { state: 'none' as const, source: null };
+    const rules = [...app.scoped.local.rules, ...app.scoped.project.rules, ...app.scoped.user.rules];
+    const dm =
+      app.scoped.local.defaultMode ?? app.scoped.project.defaultMode ?? app.scoped.user.defaultMode;
+    return effectiveDisplay(rules, dm, entry.path);
+  });
 </script>
 
 <div class="node" class:selected>
@@ -60,7 +72,7 @@
       </svg>
     </button>
     <button class="label" onclick={() => (app.selectedPath = entry.path)} ondblclick={toggle}>
-      <span class="icon" class:folder={entry.isDir} aria-hidden="true">
+      <span class="icon e-{eff.state}" class:folder={entry.isDir} aria-hidden="true">
         {#if entry.isDir}
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
             <path
@@ -84,7 +96,13 @@
           </svg>
         {/if}
       </span>
-      <span class="name" class:dim={entry.excluded}>{entry.name}</span>
+      <span class="name e-{eff.state}" class:dim={entry.excluded}>{entry.name}</span>
+      {#if entry.ignored && !entry.excluded}
+        <span
+          class="gitig"
+          title=".gitignore 경로 — 에이전트가 Grep 검색으로는 발견하지 못하지만, 경로를 알면 읽을 수 있습니다. 접근 허용/차단은 Allow/Ask/Deny 규칙이 결정합니다."
+        >검색 제외</span>
+      {/if}
       {#if badge.label}
         <span class="badge b-{badge.kind}">{badge.label}</span>
       {/if}
@@ -175,6 +193,24 @@
     color: var(--text-3);
     font-style: italic;
   }
+  /* Effective access coloring (explicit or inherited from an ancestor rule). */
+  .name.e-allow,
+  .icon.e-allow {
+    color: var(--allow);
+  }
+  .name.e-ask,
+  .icon.e-ask {
+    color: var(--ask);
+  }
+  .name.e-deny,
+  .icon.e-deny {
+    color: var(--deny);
+  }
+  .name.e-deny-default,
+  .icon.e-deny-default {
+    color: var(--deny);
+    opacity: 0.55;
+  }
   .children {
     margin-left: 0.95rem;
     border-left: 1px solid var(--border);
@@ -184,6 +220,20 @@
     color: var(--text-3);
     font-size: 0.8rem;
     padding-left: 1rem;
+  }
+  /* Neutral gray on purpose: git-ignored means "invisible to search", NOT
+     "blocked" — red is reserved for Deny. */
+  .gitig {
+    margin-left: auto;
+    font-size: 0.58rem;
+    color: var(--text-3);
+    border: 1px dashed var(--border-strong);
+    border-radius: 999px;
+    padding: 0.05rem 0.4rem;
+    flex-shrink: 0;
+  }
+  .gitig + .badge {
+    margin-left: 0.25rem;
   }
   .badge {
     margin-left: auto;

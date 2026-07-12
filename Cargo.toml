@@ -10,6 +10,7 @@ authors = ["Agent Guard contributors"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: re-serializing a user's config must not reorder their keys.
+serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }

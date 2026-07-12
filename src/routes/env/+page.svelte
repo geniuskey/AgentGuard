@@ -91,7 +91,7 @@
   .warn {
     background: var(--ask-soft);
     border: 1px solid rgba(251, 191, 36, 0.3);
-    color: #fde68a;
+    color: var(--ask);
     padding: 0.65rem 0.85rem;
     border-radius: var(--r-sm);
     margin: 1rem 0;

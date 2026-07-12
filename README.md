@@ -49,6 +49,7 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
 
 | 문서 | 내용 |
 |---|---|
+| [docs/user-guide.md](docs/user-guide.md) | 사용자 가이드 — 인앱 가이드(`/guide`)와 동일 원본, GitHub Pages 재사용 가능 |
 | [docs/requirements.md](docs/requirements.md) | 원본 요구사항서 (v0.1) |
 | [docs/architecture.md](docs/architecture.md) | 시스템 아키텍처, Rust 모듈, Tauri command 계약 |
 | [docs/policy-model.md](docs/policy-model.md) | 중립 정책 모델 ↔ settings.json 변환 (팬아웃/왕복) |

@@ -3,7 +3,7 @@
 
 mod commands;
 
-use commands::Db;
+use commands::{Db, WatchState};
 use std::sync::Mutex;
 
 /// Ensure the app-data dir exists and open the SQLite database with the schema
@@ -33,6 +33,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Db(Mutex::new(conn)))
+        .manage(WatchState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::open_project,
@@ -55,6 +56,8 @@ fn main() {
             commands::get_env_status,
             commands::gitignore_status,
             commands::add_local_to_gitignore,
+            commands::path_ignored,
+            commands::note_ignored_path,
             commands::policy_report,
             commands::export_template,
             commands::import_template,
@@ -66,11 +69,18 @@ fn main() {
             commands::validate_config,
             commands::save_agent_config,
             commands::home_relative_pattern,
-            commands::intranet_recommendation_rules,
-            commands::intranet_recommendation,
+            commands::security_baseline_rules,
+            commands::security_baseline,
+            commands::agent_security_status,
+            commands::config_get,
+            commands::config_set_value,
             commands::web_block_specifiers,
             commands::list_drives,
             commands::list_system_dir,
+            commands::simulate_access,
+            commands::inspect_agent_surface,
+            commands::watch_project,
+            commands::unwatch_project,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agent Guard");

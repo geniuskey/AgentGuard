@@ -57,6 +57,8 @@ if exists(인증서/키: *.pem|*.key|*.p12|*.pfx|id_rsa|id_ed25519)  score += 30
 if (src/ 존재 AND 위 민감 항목 ≥1 존재)  score += 20   # 민감 데이터 혼재
 if not exists(".claude/settings.local.json")            score += 5
 if (모든 경로가 Allow 상태 == 사실상 무제한)             score += 50
+if exists(hooks 설정: 임의 셸 실행)                      score += 15
+if exists(MCP 서버 설정: 권한 모델 밖 동작)              score += 10
 score = min(score, 100)   # 표시상 상한
 ```
 
