@@ -1,20 +1,20 @@
 //! Effective-policy merge across scopes (D4) — see `docs/effective-policy.md`.
 //!
 //! Evaluation is `deny > ask > allow` (first match), and `deny` wins across all
-//! scopes. Paths with no matching rule fall back to `defaultMode`
-//! (`dontAsk` => deny, otherwise => ask/prompt).
+//! scopes. Paths with no matching rule fall back to Claude Code's normal
+//! behavior (prompt / `ask`). AgentGuard manages only explicit path rules —
+//! there is no deny-by-default mode.
 
 use crate::model::{AppliesTo, Policy, PolicyRule, Scope};
 use globset::{Glob, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 
-/// Neutral rules grouped by scope, plus the effective `defaultMode`.
+/// Neutral rules grouped by scope.
 #[derive(Debug, Default, Clone)]
 pub struct ScopedRules {
     pub user: Vec<PolicyRule>,
     pub project: Vec<PolicyRule>,
     pub local: Vec<PolicyRule>,
-    pub default_mode: Option<String>,
 }
 
 impl ScopedRules {
@@ -69,12 +69,9 @@ fn rule_matches(rule: &PolicyRule, target: &str) -> bool {
     }
 }
 
-/// Fallback decision when no rule matches, based on `defaultMode`.
-pub(crate) fn fallback(default_mode: Option<&str>) -> Policy {
-    match default_mode {
-        Some("dontAsk") => Policy::Deny,
-        _ => Policy::Ask, // "default"/acceptEdits/etc. prompt at runtime
-    }
+/// Fallback decision when no rule matches: Claude Code prompts at runtime.
+pub(crate) fn fallback() -> Policy {
+    Policy::Ask
 }
 
 /// Every rule (with its scope) matching `target_path`, in Local > Project > User
@@ -111,7 +108,7 @@ pub fn compute_for(rules: &ScopedRules, target_path: &str) -> EffectivePolicy {
     if matched.is_empty() {
         return EffectivePolicy {
             path: target,
-            effective: fallback(rules.default_mode.as_deref()),
+            effective: fallback(),
             source_scope: None,
             explicit: false,
             conflict: false,
@@ -192,7 +189,6 @@ mod tests {
     fn allow_island_is_allowed_children_inherit() {
         let rules = ScopedRules {
             project: vec![rule("src", Policy::Allow, AppliesTo::FolderAndChildren)],
-            default_mode: Some("dontAsk".into()),
             ..Default::default()
         };
         let folder = compute_for(&rules, "src");
@@ -205,14 +201,13 @@ mod tests {
     }
 
     #[test]
-    fn dont_ask_denies_unmatched_paths() {
+    fn unmatched_paths_ask() {
         let rules = ScopedRules {
             project: vec![rule("src", Policy::Allow, AppliesTo::FolderAndChildren)],
-            default_mode: Some("dontAsk".into()),
             ..Default::default()
         };
         let other = compute_for(&rules, "vendor/lib.js");
-        assert_eq!(other.effective, Policy::Deny);
+        assert_eq!(other.effective, Policy::Ask);
         assert_eq!(other.source_scope, None);
     }
 

@@ -68,9 +68,7 @@
   const eff = $derived.by(() => {
     if (entry.excluded) return { state: 'none' as const, source: null };
     const rules = [...app.scoped.local.rules, ...app.scoped.project.rules, ...app.scoped.user.rules];
-    const dm =
-      app.scoped.local.defaultMode ?? app.scoped.project.defaultMode ?? app.scoped.user.defaultMode;
-    return effectiveDisplay(rules, dm, entry.path);
+    return effectiveDisplay(rules, entry.path);
   });
 </script>
 
@@ -221,11 +219,6 @@
   .name.e-deny,
   .icon.e-deny {
     color: var(--deny);
-  }
-  .name.e-deny-default,
-  .icon.e-deny-default {
-    color: var(--deny);
-    opacity: 0.55;
   }
   .children {
     margin-left: 0.95rem;

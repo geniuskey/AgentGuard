@@ -4,8 +4,8 @@
 //! Path queries reuse the effective merge (`effective.rs`) over the neutral
 //! rules. Command queries evaluate raw `Bash(...)` specifiers with Claude
 //! Code's prefix semantics (`Bash(npm run test:*)` = literal string prefix,
-//! bare `Bash` = everything). Both fall back to `defaultMode` when nothing
-//! matches (deny > ask > allow, deny wins across scopes).
+//! bare `Bash` = everything). When nothing matches the decision falls back to
+//! Claude Code's normal prompt behavior (`ask`); deny > ask > allow otherwise.
 
 use crate::effective::{self, ScopedRules};
 use crate::model::{AppliesTo, Policy, Scope};
@@ -34,9 +34,8 @@ pub struct SimResult {
     pub kind: String,
     pub decision: Policy,
     pub matches: Vec<SimMatch>,
-    /// No rule matched — `defaultMode` decided.
+    /// No rule matched — Claude Code's default prompt behavior decided.
     pub fallback: bool,
-    pub default_mode: Option<String>,
 }
 
 fn mark_decisive(matches: &mut [SimMatch], decision: Policy) {
@@ -65,7 +64,6 @@ pub fn simulate_path(rules: &ScopedRules, target: &str) -> SimResult {
         decision: eff.effective,
         matches,
         fallback,
-        default_mode: rules.default_mode.clone(),
     }
 }
 
@@ -99,11 +97,7 @@ pub fn bash_specifier_matches(spec: &str, cmd: &str) -> bool {
 }
 
 /// Simulate a Bash command against the raw permission arrays of each scope.
-pub fn simulate_command(
-    perms: &[(Scope, Permissions)],
-    default_mode: Option<&str>,
-    command: &str,
-) -> SimResult {
+pub fn simulate_command(perms: &[(Scope, Permissions)], command: &str) -> SimResult {
     let cmd = command.trim();
     let mut matches = Vec::new();
     for (scope, p) in perms {
@@ -133,7 +127,7 @@ pub fn simulate_command(
     } else if has(Policy::Allow) {
         (Policy::Allow, false)
     } else {
-        (effective::fallback(default_mode), true)
+        (effective::fallback(), true)
     };
     mark_decisive(&mut matches, decision);
 
@@ -143,7 +137,6 @@ pub fn simulate_command(
         decision,
         matches,
         fallback,
-        default_mode: default_mode.map(|s| s.to_string()),
     }
 }
 
@@ -167,18 +160,18 @@ mod tests {
             perms(&["Bash(npm run test:*)", "Bash(git status)"], &[], &[]),
         )];
 
-        let r = simulate_command(&scopes, None, "npm run test -- --watch");
+        let r = simulate_command(&scopes, "npm run test -- --watch");
         assert_eq!(r.decision, Policy::Allow);
         assert_eq!(r.matches.len(), 1);
         assert!(r.matches[0].decisive);
 
-        let r = simulate_command(&scopes, None, "git status");
+        let r = simulate_command(&scopes, "git status");
         assert_eq!(r.decision, Policy::Allow);
 
         // Exact rule does not cover arguments.
-        let r = simulate_command(&scopes, None, "git status --short");
+        let r = simulate_command(&scopes, "git status --short");
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Ask); // no defaultMode -> prompt
+        assert_eq!(r.decision, Policy::Ask); // unmatched -> prompt
     }
 
     #[test]
@@ -187,7 +180,7 @@ mod tests {
             (Scope::User, perms(&[], &[], &["Bash(curl:*)"])),
             (Scope::Local, perms(&["Bash(curl:*)"], &[], &[])),
         ];
-        let r = simulate_command(&scopes, None, "curl https://example.com");
+        let r = simulate_command(&scopes, "curl https://example.com");
         assert_eq!(r.decision, Policy::Deny);
         assert_eq!(r.matches.len(), 2);
         let deny = r.matches.iter().find(|m| m.list == Policy::Deny).unwrap();
@@ -199,19 +192,19 @@ mod tests {
     #[test]
     fn bare_bash_rule_matches_everything() {
         let scopes = vec![(Scope::Project, perms(&[], &["Bash"], &[]))];
-        let r = simulate_command(&scopes, None, "anything at all");
+        let r = simulate_command(&scopes, "anything at all");
         assert_eq!(r.decision, Policy::Ask);
         assert!(!r.fallback);
     }
 
     #[test]
-    fn command_fallback_follows_default_mode() {
+    fn command_fallback_is_ask() {
         let scopes = vec![(Scope::Project, perms(&[], &[], &[]))];
-        let r = simulate_command(&scopes, Some("dontAsk"), "rm -rf /");
+        let r = simulate_command(&scopes, "rm -rf /");
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Deny);
+        assert_eq!(r.decision, Policy::Ask);
 
-        let r = simulate_command(&scopes, None, "ls");
+        let r = simulate_command(&scopes, "ls");
         assert!(r.fallback);
         assert_eq!(r.decision, Policy::Ask);
     }
@@ -222,7 +215,7 @@ mod tests {
             Scope::Project,
             perms(&["Read(./src/**)"], &[], &["WebFetch(domain:evil.example)"]),
         )];
-        let r = simulate_command(&scopes, None, "cat src/app.ts");
+        let r = simulate_command(&scopes, "cat src/app.ts");
         assert!(r.fallback);
         assert!(r.matches.is_empty());
     }
@@ -240,7 +233,6 @@ mod tests {
                 Policy::Deny,
                 AppliesTo::FolderAndChildren,
             )],
-            default_mode: Some("dontAsk".into()),
             ..Default::default()
         };
 
@@ -252,10 +244,9 @@ mod tests {
         assert_eq!(deny.rule, "./src/secret/**");
         assert!(deny.decisive);
 
-        // Unmatched path falls back to Default Deny.
+        // Unmatched path falls back to Claude Code's prompt behavior.
         let r = simulate_path(&rules, "vendor/lib.js");
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Deny);
-        assert_eq!(r.default_mode.as_deref(), Some("dontAsk"));
+        assert_eq!(r.decision, Policy::Ask);
     }
 }

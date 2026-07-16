@@ -25,7 +25,7 @@
     type Policy,
     type ScopeName
   } from '$lib/ipc';
-  import { app, mergeRules, refreshEffective, setDefaultMode, setPolicy } from '$lib/state.svelte';
+  import { app, mergeRules, refreshEffective, setPolicy } from '$lib/state.svelte';
   import FileExplorer from '$lib/components/FileExplorer.svelte';
   import PolicyEditor from '$lib/components/PolicyEditor.svelte';
   import EffectivePreview from '$lib/components/EffectivePreview.svelte';
@@ -104,18 +104,11 @@
     unwatchProject().catch(() => {});
   });
 
-  const dontAsk = $derived(app.scoped[app.activeScope].defaultMode === 'dontAsk');
-
-  function toggleDefaultDeny() {
-    setDefaultMode(app.activeScope, dontAsk ? null : 'dontAsk');
-    refreshEffective();
-  }
-
   async function onProfileChange() {
     if (!profile) return;
     try {
       const plan = await applyProfile(app.projectRoot, profile);
-      mergeRules(app.activeScope, plan.rules, plan.defaultMode);
+      mergeRules(app.activeScope, plan.rules);
       await refreshEffective();
     } catch (e) {
       error = String(e);
@@ -308,11 +301,7 @@
       <button class="mini" onclick={() => goto('/guide')} title="사용 가이드" aria-label="사용 가이드">?</button>
     </div>
 
-    <label class="dd" title="명시적으로 허용한 경로 외에는 모두 차단">
-      <input type="checkbox" checked={dontAsk} onchange={toggleDefaultDeny} />
-      Default Deny <span class="dd-scope">{app.activeScope}</span>
-    </label>
-    <button class="save" class:dirty={app.dirty} onclick={openSaveDialog} disabled={!app.dirty}>
+    <button class="save save-push" class:dirty={app.dirty} onclick={openSaveDialog} disabled={!app.dirty}>
       {#if app.dirty}<span class="save-dot" aria-hidden="true"></span>Save…{:else}Saved{/if}
     </button>
   </div>
@@ -516,29 +505,8 @@
     background: var(--bg-2);
     border-color: var(--border);
   }
-  .dd {
+  .save-push {
     margin-left: auto;
-    font-size: 0.78rem;
-    color: var(--text-2);
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    white-space: nowrap;
-  }
-  /* Protection toggle: checked = safer, so it reads green. */
-  .dd input {
-    accent-color: var(--allow);
-  }
-  .dd:has(input:checked) {
-    color: var(--allow);
-  }
-  .dd-scope {
-    font-size: 0.66rem;
-    color: var(--accent-text);
-    background: var(--accent-soft);
-    border-radius: 999px;
-    padding: 0.05rem 0.45rem;
-    text-transform: capitalize;
   }
   .save {
     display: inline-flex;

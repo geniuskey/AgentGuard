@@ -13,9 +13,9 @@ import {
 
 function emptyScoped(): ScopedRulesDto {
   return {
-    user: { rules: [], defaultMode: null, extraDeny: [] },
-    project: { rules: [], defaultMode: null, extraDeny: [] },
-    local: { rules: [], defaultMode: null, extraDeny: [] }
+    user: { rules: [], extraDeny: [] },
+    project: { rules: [], extraDeny: [] },
+    local: { rules: [], extraDeny: [] }
   };
 }
 
@@ -72,11 +72,6 @@ export function clearPolicy(path: string) {
   app.dirty = true;
 }
 
-export function setDefaultMode(scope: ScopeName, mode: string | null) {
-  app.scoped[scope].defaultMode = mode;
-  app.dirty = true;
-}
-
 /** Upsert a full rule into an explicit scope (one rule per path). */
 export function upsertRule(scope: ScopeName, rule: PolicyRule) {
   const bucket = app.scoped[scope];
@@ -99,15 +94,14 @@ export function setExtraDeny(scope: ScopeName, list: string[]) {
   app.dirty = true;
 }
 
-/** Merge a batch of rules into a scope (upsert by path), optionally set defaultMode. */
-export function mergeRules(scope: ScopeName, rules: PolicyRule[], defaultMode?: string | null) {
+/** Merge a batch of rules into a scope (upsert by path). */
+export function mergeRules(scope: ScopeName, rules: PolicyRule[]) {
   const bucket = app.scoped[scope];
   for (const rule of rules) {
     const idx = bucket.rules.findIndex((r) => r.path === rule.path);
     if (idx >= 0) bucket.rules[idx] = rule;
     else bucket.rules.push(rule);
   }
-  if (defaultMode !== undefined) bucket.defaultMode = defaultMode;
   app.dirty = true;
 }
 

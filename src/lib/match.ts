@@ -4,7 +4,7 @@
 // lives in the Rust core (effective.rs).
 import type { PolicyRule } from './ipc';
 
-export type EffectiveState = 'allow' | 'ask' | 'deny' | 'deny-default' | 'none';
+export type EffectiveState = 'allow' | 'ask' | 'deny' | 'none';
 
 export interface EffectiveDisplay {
   state: EffectiveState;
@@ -69,20 +69,14 @@ export function ruleMatches(rulePath: string, target: string): boolean {
 
 /**
  * Effective display state for one path: deny > ask > allow (mirrors the
- * authoritative merge in effective.rs); with no match the default mode decides
- * (Default Deny → blocked). Rules' `appliesTo` forms are expanded, so children
- * inherit folder rules.
+ * authoritative merge in effective.rs); with no match the path follows Claude
+ * Code's default behavior (`none` — prompt when needed). Rules' `appliesTo`
+ * forms are expanded, so children inherit folder rules.
  */
-export function effectiveDisplay(
-  rules: PolicyRule[],
-  defaultMode: string | null,
-  target: string
-): EffectiveDisplay {
+export function effectiveDisplay(rules: PolicyRule[], target: string): EffectiveDisplay {
   for (const policy of ['deny', 'ask', 'allow'] as const) {
     const hit = rules.find((r) => r.policy === policy && matchesRule(r, target));
     if (hit) return { state: policy, source: hit.path };
   }
-  return defaultMode === 'dontAsk'
-    ? { state: 'deny-default', source: null }
-    : { state: 'none', source: null };
+  return { state: 'none', source: null };
 }

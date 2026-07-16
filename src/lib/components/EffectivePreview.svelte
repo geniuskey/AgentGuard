@@ -14,8 +14,7 @@
   const byScope = $derived(
     (['user', 'project', 'local'] as const).map((s) => ({
       scope: s,
-      rules: app.scoped[s].rules,
-      defaultMode: app.scoped[s].defaultMode
+      rules: app.scoped[s].rules
     }))
   );
 
@@ -88,7 +87,7 @@
     {:else if tab === 'byscope'}
       {#each byScope as g (g.scope)}
         <div class="scope-group">
-          <b>{g.scope}{#if g.defaultMode} · defaultMode={g.defaultMode}{/if}</b>
+          <b>{g.scope}</b>
           {#each g.rules as r (r.path + r.policy)}
             <div class="row">
               <span class="pletter l-{r.policy}">{r.policy[0].toUpperCase()}</span>{r.path}

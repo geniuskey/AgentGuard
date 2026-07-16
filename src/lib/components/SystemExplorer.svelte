@@ -133,7 +133,7 @@
     <span><i class="lg lg-ask"></i>확인 후</span>
     <span><i class="lg lg-deny"></i>차단</span>
     <span
-      use:tooltip={'규칙이 없는 항목은 도구 기본 동작을 따릅니다 — 보통 접근할 때 확인창이 뜹니다.\nDefault Deny를 켜면 규칙 없는 항목도 전부 차단(붉은색)됩니다.'}
+      use:tooltip={'규칙이 없는 항목은 도구 기본 동작을 따릅니다 — 보통 접근할 때 확인창이 뜹니다.\n민감한 경로는 폴더 단위로 Deny를 지정해 차단하세요.'}
     >
       <i class="lg lg-none"></i>기본 (필요 시 확인)
     </span>
