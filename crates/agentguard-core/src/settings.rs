@@ -2,8 +2,10 @@
 //!
 //! Design (see `docs/policy-model.md` §6):
 //! - Parse the whole file into `serde_json::Value`, touching only
-//!   `permissions.{allow,ask,deny,defaultMode}`; every other key is preserved.
+//!   `permissions.{allow,ask,deny}`; every other key is preserved.
 //! - Managed rules are re-emitted deterministically; unmanaged rules kept verbatim.
+//! - The legacy `permissions.defaultMode` (deny-by-default) is no longer managed:
+//!   it is stripped on write so policy is driven only by explicit path rules.
 //! - On any parse/convert failure, DO NOT write — preserve the original (req §9.4).
 
 use crate::model::{PolicyRule, Scope};
@@ -35,7 +37,6 @@ pub struct LoadedSettings {
     /// Full original JSON tree (preserved for round-trip). Always an object.
     pub raw: Value,
     pub permissions: Permissions,
-    pub default_mode: Option<String>,
 }
 
 fn string_array(v: Option<&Value>) -> Vec<String> {
@@ -69,16 +70,10 @@ pub fn parse(scope: Scope, text: &str) -> crate::Result<LoadedSettings> {
         ask: string_array(perms_obj.and_then(|p| p.get("ask"))),
         deny: string_array(perms_obj.and_then(|p| p.get("deny"))),
     };
-    let default_mode = perms_obj
-        .and_then(|p| p.get("defaultMode"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
     Ok(LoadedSettings {
         scope,
         raw,
         permissions,
-        default_mode,
     })
 }
 
@@ -94,7 +89,6 @@ pub fn render(
     base: &Value,
     rules: &[PolicyRule],
     unmanaged: &UnmanagedRules,
-    default_mode: Option<&str>,
 ) -> crate::Result<String> {
     if !base.is_object() {
         return Err(crate::Error::InvalidRule(
@@ -118,14 +112,9 @@ pub fn render(
     set_or_clear_array(&mut perms, "ask", managed.ask, &unmanaged.ask);
     set_or_clear_array(&mut perms, "deny", managed.deny, &unmanaged.deny);
 
-    match default_mode {
-        Some(m) => {
-            perms.insert("defaultMode".into(), Value::String(m.to_string()));
-        }
-        None => {
-            perms.remove("defaultMode");
-        }
-    }
+    // Deny-by-default is no longer a managed concept — strip any legacy value so
+    // policy is driven only by explicit allow/ask/deny path rules.
+    perms.remove("defaultMode");
 
     if perms.is_empty() {
         obj.remove("permissions");
@@ -167,11 +156,10 @@ mod tests {
         let s = parse(Scope::Project, "   ").unwrap();
         assert!(s.raw.is_object());
         assert!(s.permissions.allow.is_empty());
-        assert_eq!(s.default_mode, None);
     }
 
     #[test]
-    fn parse_extracts_permissions_and_default_mode() {
+    fn parse_extracts_permissions() {
         let text = r#"{
             "permissions": {
                 "defaultMode": "dontAsk",
@@ -180,9 +168,25 @@ mod tests {
             }
         }"#;
         let s = parse(Scope::Project, text).unwrap();
-        assert_eq!(s.default_mode.as_deref(), Some("dontAsk"));
         assert_eq!(s.permissions.allow, vec!["Read(./src/**)"]);
         assert_eq!(s.permissions.deny, vec!["Read(./secrets/**)"]);
+    }
+
+    /// A legacy `defaultMode` present in a file is stripped on the next managed write.
+    #[test]
+    fn render_strips_legacy_default_mode() {
+        let original = r#"{
+            "permissions": {
+                "defaultMode": "dontAsk",
+                "allow": ["Read(./src/**)"]
+            }
+        }"#;
+        let loaded = parse(Scope::Project, original).unwrap();
+        let (rules, unmanaged) = policy::from_permissions(&loaded.permissions);
+        let rendered = render(&loaded.raw, &rules, &unmanaged).unwrap();
+        assert!(!rendered.contains("defaultMode"), "rendered: {rendered}");
+        let reparsed = parse(Scope::Project, &rendered).unwrap();
+        assert!(reparsed.raw["permissions"].get("defaultMode").is_none());
     }
 
     /// The DoD invariant: unknown top-level keys and non-file-access rules survive a
@@ -211,7 +215,7 @@ mod tests {
             PolicyRule::new("secrets", Policy::Deny, AppliesTo::FolderAndChildren),
         ];
 
-        let rendered = render(&loaded.raw, &rules, &unmanaged, Some("dontAsk")).unwrap();
+        let rendered = render(&loaded.raw, &rules, &unmanaged).unwrap();
         let reparsed = parse(Scope::Project, &rendered).unwrap();
 
         // (a) Unknown top-level keys preserved verbatim.
@@ -246,9 +250,6 @@ mod tests {
         assert!(folded
             .iter()
             .any(|r| r.path == "secrets" && r.policy == Policy::Deny));
-
-        // (d) defaultMode set.
-        assert_eq!(reparsed.default_mode.as_deref(), Some("dontAsk"));
     }
 
     #[test]
@@ -259,10 +260,10 @@ mod tests {
             Policy::Allow,
             AppliesTo::FolderAndChildren,
         )];
-        let a = render(&base, &rules, &UnmanagedRules::default(), None).unwrap();
+        let a = render(&base, &rules, &UnmanagedRules::default()).unwrap();
         let reparsed = parse(Scope::Project, &a).unwrap();
         let (folded, un) = policy::from_permissions(&reparsed.permissions);
-        let b = render(&reparsed.raw, &folded, &un, None).unwrap();
+        let b = render(&reparsed.raw, &folded, &un).unwrap();
         assert_eq!(a, b);
     }
 }

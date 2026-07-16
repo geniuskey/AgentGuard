@@ -78,12 +78,7 @@
 
     {#if result.fallback}
       <p class="note">
-        일치하는 규칙 없음 —
-        {#if result.defaultMode === 'dontAsk'}
-          Default Deny(<code>defaultMode: dontAsk</code>)에 따라 차단됩니다.
-        {:else}
-          기본 동작에 따라 실행 시 확인을 요청합니다.
-        {/if}
+        일치하는 규칙 없음 — 기본 동작에 따라 실행 시 확인을 요청합니다.
       </p>
     {:else}
       <div class="matches">

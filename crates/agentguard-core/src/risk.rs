@@ -16,7 +16,7 @@ pub struct RiskSignals {
     pub source_mixed_with_sensitive: bool,
     /// `.claude/settings.local.json` is absent.
     pub missing_local_settings: bool,
-    /// Effective policy is essentially unrestricted (root allow, no deny/ask, not dontAsk).
+    /// Effective policy is essentially unrestricted (root allow, no deny/ask).
     pub all_paths_allowed: bool,
     /// Hooks are configured in any scope (they run arbitrary shell commands
     /// outside the permission rules).

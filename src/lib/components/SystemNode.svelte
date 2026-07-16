@@ -60,9 +60,7 @@
 
   // Effective access for this path — explicit rule, ancestor-inherited rule,
   // or the scope default. Colors the name so inheritance is visible.
-  const eff = $derived(
-    effectiveDisplay(app.scoped[scope].rules, app.scoped[scope].defaultMode, entry.pattern)
-  );
+  const eff = $derived(effectiveDisplay(app.scoped[scope].rules, entry.pattern));
   const inherited = $derived(
     !!eff.source && eff.source !== entry.pattern && eff.source !== entry.pattern + '/**'
   );
@@ -76,8 +74,6 @@
         return `지금 상태: 접근할 때마다 확인${from}`;
       case 'deny':
         return `지금 상태: 차단됨${from}`;
-      case 'deny-default':
-        return '지금 상태: 차단됨 — Default Deny 켜짐 (Allow로 지정해야 접근 가능)';
       default:
         return '지금 상태: 규칙 없음 — 기본 동작 (필요할 때 확인)';
     }
@@ -239,11 +235,6 @@
   .name.e-deny,
   .icon.e-deny {
     color: var(--deny);
-  }
-  .name.e-deny-default,
-  .icon.e-deny-default {
-    color: var(--deny);
-    opacity: 0.55;
   }
   /* Inherited state marker: small hollow dot (explicit rules get the badge). */
   .inh {

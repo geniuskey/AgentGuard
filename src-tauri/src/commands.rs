@@ -126,12 +126,11 @@ pub fn web_block_specifiers() -> Vec<String> {
     WEB_DENY.iter().map(|s| s.to_string()).collect()
 }
 
-/// Neutral rules for one scope plus its defaultMode and app-toggled capability denies.
+/// Neutral rules for one scope plus app-toggled capability denies.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ScopeRules {
     pub rules: Vec<PolicyRule>,
-    pub default_mode: Option<String>,
     /// Non-path deny specifiers currently toggled on (subset of [`WEB_DENY`]).
     #[serde(default)]
     pub extra_deny: Vec<String>,
@@ -147,18 +146,10 @@ pub struct ScopedRulesDto {
 
 impl ScopedRulesDto {
     fn to_core(&self) -> ScopedRules {
-        // Effective defaultMode: Local > Project > User (last one set wins).
-        let default_mode = self
-            .local
-            .default_mode
-            .clone()
-            .or_else(|| self.project.default_mode.clone())
-            .or_else(|| self.user.default_mode.clone());
         ScopedRules {
             user: self.user.rules.clone(),
             project: self.project.rules.clone(),
             local: self.local.rules.clone(),
-            default_mode,
         }
     }
 }
@@ -183,11 +174,7 @@ fn read_scope(root: &Path, scope: Scope) -> Result<ScopeRules, String> {
         .filter(|w| unmanaged.deny.iter().any(|d| d == **w))
         .map(|w| w.to_string())
         .collect();
-    Ok(ScopeRules {
-        rules,
-        default_mode: loaded.default_mode,
-        extra_deny,
-    })
+    Ok(ScopeRules { rules, extra_deny })
 }
 
 /// Load the managed (folded) rules for all three scopes.
@@ -249,13 +236,8 @@ fn render_scope(
             unmanaged.deny.push(d.clone());
         }
     }
-    let after = settings::render(
-        &loaded.raw,
-        &sr.rules,
-        &unmanaged,
-        sr.default_mode.as_deref(),
-    )
-    .map_err(|e| e.to_string())?;
+    let after =
+        settings::render(&loaded.raw, &sr.rules, &unmanaged).map_err(|e| e.to_string())?;
     Ok((file, before, after))
 }
 
@@ -481,7 +463,6 @@ pub fn apply_profile(project_root: String, profile: String) -> Result<ProfilePla
         _ => agentguard_core::profiles::Profile::Custom,
     };
     Ok(ProfilePlan {
-        default_mode: p.default_mode().map(|s| s.to_string()),
         rules: agentguard_core::profiles::baseline_rules(p, &scan),
     })
 }
@@ -489,7 +470,6 @@ pub fn apply_profile(project_root: String, profile: String) -> Result<ProfilePla
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfilePlan {
-    pub default_mode: Option<String>,
     pub rules: Vec<PolicyRule>,
 }
 
@@ -1369,22 +1349,13 @@ pub fn simulate_access(
         "command" => {
             let root = PathBuf::from(&project_root);
             let mut perms = Vec::new();
-            let mut default_mode: Option<String> = None;
-            // User -> Project -> Local: the last defaultMode set wins (Local > Project > User).
             for scope in [Scope::User, Scope::Project, Scope::Local] {
                 let file = scope_file(&root, scope)?;
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
                 let loaded = settings::parse(scope, &text).map_err(|e| e.to_string())?;
-                if loaded.default_mode.is_some() {
-                    default_mode = loaded.default_mode.clone();
-                }
                 perms.push((scope, loaded.permissions));
             }
-            Ok(simulate::simulate_command(
-                &perms,
-                default_mode.as_deref(),
-                &query,
-            ))
+            Ok(simulate::simulate_command(&perms, &query))
         }
         other => Err(format!("unknown simulate kind: {other}")),
     }

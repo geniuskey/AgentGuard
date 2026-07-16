@@ -26,7 +26,6 @@ export interface PolicyRule {
 
 export interface ScopeRules {
   rules: PolicyRule[];
-  defaultMode: string | null;
   /** Non-path tool denies toggled on (web/network capability block). */
   extraDeny: string[];
 }
@@ -224,7 +223,6 @@ export interface GitignoreStatus {
 }
 
 export interface ProfilePlan {
-  defaultMode: string | null;
   rules: PolicyRule[];
 }
 
@@ -483,7 +481,6 @@ export interface SimResult {
   decision: Policy;
   matches: SimMatch[];
   fallback: boolean;
-  defaultMode: string | null;
 }
 
 /**

@@ -19,7 +19,6 @@
     mergeRules,
     refreshEffective,
     removeRule,
-    setDefaultMode,
     setExtraDeny,
     upsertRule
   } from '$lib/state.svelte';
@@ -53,7 +52,6 @@
 
   const bucket = $derived(app.scoped[scope]);
   const rules = $derived(bucket.rules);
-  const dontAsk = $derived(bucket.defaultMode === 'dontAsk');
   const webBlocked = $derived((bucket.extraDeny ?? []).length > 0);
 
   const counts = $derived({
@@ -204,11 +202,6 @@
     await refreshEffective();
   }
 
-  async function toggleDeny() {
-    setDefaultMode(scope, dontAsk ? null : 'dontAsk');
-    await refreshEffective();
-  }
-
   // Pick a folder anywhere on the PC and add it directly as an Allow (work folder) or
   // Deny (sensitive folder) rule — the explicit "designate folders" workflow. The path
   // is converted to the correct global pattern (`//c/…/**` or `~/…/**`).
@@ -331,10 +324,6 @@
       <span class="ov-dot d-deny" aria-hidden="true"></span>Deny <b>{counts.deny}</b>
     </span>
     <span class="ov-sep" aria-hidden="true"></span>
-    <button class="ov ov-toggle" class:on={dontAsk} onclick={toggleDeny} title="명시적으로 허용한 것만 접근 가능 — 켜짐(녹색) = 보호 활성">
-      <span class="ov-dot" class:d-guard={dontAsk} aria-hidden="true"></span>
-      Default Deny <b>{dontAsk ? 'ON' : 'OFF'}</b>
-    </button>
     <button
       class="ov ov-toggle"
       class:on={webBlocked}
