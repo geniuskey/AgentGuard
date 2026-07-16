@@ -99,7 +99,7 @@ Ask    "docs/**"     → permissions.ask   += [ 위 6개 도구의 ./docs/** ]
 
 내부 모델:
 ```jsonc
-{ "scope": "project", "defaultPolicy": "deny", "rules": [
+{ "scope": "project", "rules": [
   { "path": "src",     "policy": "allow", "appliesTo": "folder-and-children" },
   { "path": "tests",   "policy": "allow", "appliesTo": "folder-and-children" },
   { "path": "docs",    "policy": "ask",   "appliesTo": "folder-and-children" },
@@ -113,7 +113,6 @@ Ask    "docs/**"     → permissions.ask   += [ 위 6개 도구의 ./docs/** ]
 ```json
 {
   "permissions": {
-    "defaultMode": "dontAsk",
     "allow": [
       "Read(./src/**)", "Edit(./src/**)", "Write(./src/**)", "Grep(./src/**)", "Glob(./src/**)", "NotebookEdit(./src/**)",
       "Read(./tests/**)", "Edit(./tests/**)", "Write(./tests/**)", "Grep(./tests/**)", "Glob(./tests/**)", "NotebookEdit(./tests/**)",
@@ -130,7 +129,8 @@ Ask    "docs/**"     → permissions.ask   += [ 위 6개 도구의 ./docs/** ]
 }
 ```
 
-> `defaultMode: "dontAsk"`는 `defaultPolicy == "deny"`일 때만 붙인다(D2, effective-policy.md 참조).
+> `permissions.defaultMode`(deny-by-default)는 더 이상 사용하지 않는다. 정책은 명시적 경로
+> 규칙만으로 통제하며, 파일에 남은 `defaultMode`는 저장 시 제거된다(effective-policy.md §2 참조).
 
 ---
 
@@ -156,7 +156,8 @@ Ask    "docs/**"     → permissions.ask   += [ 위 6개 도구의 ./docs/** ]
 요구사항서 13장 원칙을 구현 규칙으로 확정:
 
 1. **보존 파싱**: Rust `serde_json::Value`로 전체 트리를 읽는다. AG는
-   `permissions.allow/deny/ask/defaultMode`만 다루고 **나머지 모든 키·값은 손대지 않는다**.
+   `permissions.allow/deny/ask`만 다루고(그리고 legacy `permissions.defaultMode`는 저장 시 제거)
+   **나머지 모든 키·값은 손대지 않는다**.
    (top-level `env`, `hooks`, `model`, `$schema`, 그리고 `permissions` 내 `additionalDirectories` 등)
 2. **미관리 규칙 보존**: allow/deny/ask 배열 안에서도 AG가 파싱하지 못한 원소는 원위치·원순서로 유지.
    재작성 시 [AG 관리 규칙] + [보존된 미관리 규칙] 순으로 병합, 중복 제거.

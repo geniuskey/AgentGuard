@@ -70,7 +70,7 @@ score = min(score, 100)   # 표시상 상한
 | 61+ | High |
 
 > "모든 경로 Allow(+50)"는 현재 유효 정책이 사실상 무제한일 때만 가산한다
-> (예: defaultMode가 dontAsk가 아니고 deny/ask가 비어 있으며 루트 allow가 있는 경우).
+> (예: deny/ask가 비어 있으며 루트 allow가 있는 경우).
 > 이 항목은 열람 시점의 effective policy(effective-policy.md)에서 판정한다.
 
 ---

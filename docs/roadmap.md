@@ -49,7 +49,7 @@
 ### 2) Effective Access Preview
 - `compute_effective`: 3 scope 병합(effective-policy.md D4), deny>ask>allow.
 - Preview 탭 최소 구성: Allowed / Denied / Ask / Raw Rules.
-- Default Deny 프로필(Conservative) = `defaultMode: dontAsk`(D2) 적용.
+- 프로필(Conservative 등)은 민감 경로 Deny + 소스 Allow 규칙만 적용(D2/Default Deny 폐기).
 
 ### 3) 최근 프로젝트 리스크 기억
 - `scan_risks` + `compute_risk_score`(risk-scanner.md) → `projects`/`known_sensitive_paths` 저장.
@@ -110,7 +110,7 @@ Secret 저장 · 클라우드 동기화 · 중앙 정책 서버 · 자동 Claude
 
 | 요구사항 장 | 다루는 문서 |
 |---|---|
-| 3 제품 철학 | architecture(Local First), security, effective-policy(Default Deny) |
+| 3 제품 철학 | architecture(Local First), security, effective-policy(명시적 경로 규칙) |
 | 5 지원 범위 | roadmap(Iteration/비범위) |
 | 7 Scope | policy-model, effective-policy, security |
 | 8.1~8.3 열기/탐색기/편집 | architecture, ui-spec, policy-model |

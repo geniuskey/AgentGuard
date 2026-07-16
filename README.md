@@ -7,7 +7,7 @@ agents can access inside a project — without having to understand `settings.js
 
 ## Core Ideas
 
-- Default Deny — allow only what is needed
+- Explicit drive/folder rules — Deny sensitive paths, Allow work folders
 - Local-only processing (no network, no telemetry)
 - Visual project boundary editor (Explorer-style Allow / Ask / Deny)
 - User / Project / Local settings support
@@ -53,7 +53,7 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
 | [docs/requirements.md](docs/requirements.md) | 원본 요구사항서 (v0.1) |
 | [docs/architecture.md](docs/architecture.md) | 시스템 아키텍처, Rust 모듈, Tauri command 계약 |
 | [docs/policy-model.md](docs/policy-model.md) | 중립 정책 모델 ↔ settings.json 변환 (팬아웃/왕복) |
-| [docs/effective-policy.md](docs/effective-policy.md) | 병합 알고리즘, Default Deny 매핑, 충돌 탐지, Preview |
+| [docs/effective-policy.md](docs/effective-policy.md) | 병합 알고리즘, 정책 모델, 충돌 탐지, Preview |
 | [docs/data-model.md](docs/data-model.md) | SQLite 스키마, app-config, 백업 규칙 |
 | [docs/risk-scanner.md](docs/risk-scanner.md) | 민감 경로 스캐너, 리스크 점수 함수 |
 | [docs/security.md](docs/security.md) | 보안 원칙, 경고 규칙, Secret 감지 |
@@ -66,7 +66,8 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
 
 - **경로 정책은 `Tool(specifier)`로 팬아웃** — Claude Code는 도구 중심 permission을
   사용하므로 "Allow `src/`"는 `Read/Edit/Write/Grep/Glob/NotebookEdit(./src/**)`로 확장된다.
-- **Default Deny는 `defaultMode: "dontAsk"`로 구현** — catch-all `Deny(./**)`는
-  allow-island을 덮어버리므로(deny 우선) 사용하지 않는다.
+- **정책은 명시적 경로 규칙만으로 통제** — 민감 경로는 폴더 단위 Deny, 작업 폴더는 Allow.
+  deny-by-default 모드(`defaultMode: "dontAsk"`)는 폐기했고, 파일에 남은 값은 저장 시 제거한다.
+  매칭 규칙이 없는 경로는 Claude Code 기본 동작(실행 시 확인)을 따른다.
 - **앱 메타데이터는 SQLite에만** — `settings.json`에는 순수 규칙만 기록하고 알 수 없는
   필드는 무손실 보존한다.
