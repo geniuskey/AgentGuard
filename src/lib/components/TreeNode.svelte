@@ -4,7 +4,23 @@
   import { effectiveDisplay } from '$lib/match';
   import Self from './TreeNode.svelte';
 
-  let { entry }: { entry: DirEntry } = $props();
+  let {
+    entry,
+    oncontext
+  }: {
+    entry: DirEntry;
+    oncontext?: (entry: DirEntry, x: number, y: number) => void;
+  } = $props();
+
+  // Right-click a row: select it and open the policy context menu (like the
+  // system explorer used for user settings).
+  function onContextMenu(e: MouseEvent) {
+    if (!oncontext || entry.excluded) return;
+    e.preventDefault();
+    e.stopPropagation();
+    app.selectedPath = entry.path;
+    oncontext(entry, e.clientX, e.clientY);
+  }
 
   let expanded = $state(false);
   let children = $state<DirEntry[] | null>(null);
@@ -71,7 +87,7 @@
         <path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </button>
-    <button class="label" onclick={() => (app.selectedPath = entry.path)} ondblclick={toggle}>
+    <button class="label" onclick={() => (app.selectedPath = entry.path)} ondblclick={toggle} oncontextmenu={onContextMenu}>
       <span class="icon e-{eff.state}" class:folder={entry.isDir} aria-hidden="true">
         {#if entry.isDir}
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
@@ -115,7 +131,7 @@
         <div class="loading">…</div>
       {:else if children}
         {#each children as child (child.path)}
-          <Self entry={child} />
+          <Self entry={child} {oncontext} />
         {/each}
       {/if}
     </div>
