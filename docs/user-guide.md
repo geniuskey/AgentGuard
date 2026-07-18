@@ -87,6 +87,15 @@ Hooks와 MCP 서버는 **경로 권한 규칙 밖에서** 동작하므로 읽기
 | Export / Import | 정책 템플릿 JSON으로 팀 공유 |
 | Save | 변경 Diff 확인 → **자동 백업 후** 원자적 저장 (<kbd>Ctrl</kbd>+<kbd>S</kbd>) |
 
+## Bedrock · 환경변수 상태
+
+상단 도구의 **Env** 버튼으로 열리는 **읽기 전용** 화면입니다.
+
+- 에이전트·Bedrock 관련 환경변수의 **설정 여부**를 표로 보여줍니다.
+- 환경에 **AWS Secret 값이 노출**되면 경고합니다 — 가능하면 `AWS_PROFILE` 또는 사내 인증
+  체계를 사용하고 `settings.json`에 Secret을 직접 넣지 마세요.
+- Agent Guard는 Secret 값을 **저장하거나 전송하지 않습니다** (표시는 마스킹).
+
 ## 저장 · 백업 · 외부 변경 감지
 
 - 저장 전 항상 파일별 Diff를 보여주고, 기존 파일은 `%APPDATA%\AgentGuard\backups`에 백업합니다.

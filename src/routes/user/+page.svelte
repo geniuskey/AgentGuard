@@ -8,6 +8,7 @@
   import DiffViewer from '$lib/components/DiffViewer.svelte';
   import SystemExplorer from '$lib/components/SystemExplorer.svelte';
   import ClaudeSettingsPanel from '$lib/components/ClaudeSettingsPanel.svelte';
+  import HelpButton from '$lib/components/HelpButton.svelte';
 
   // User settings (`~/.claude/settings.json`) are global — they apply before any
   // project is selected. Editing them needs no open project, so we clear project
@@ -97,6 +98,8 @@
       <button class:active={mode === 'general'} onclick={() => setMode('general')}>일반 설정</button>
       <button class:active={mode === 'raw'} onclick={() => setMode('raw')}>Raw JSON</button>
     </div>
+
+    <HelpButton section="user" compact />
 
     <!-- Raw 모드에선 에디터 자체 저장 버튼을 쓰지만, 자리는 유지해 토글이 밀리지 않게 한다. -->
     <button

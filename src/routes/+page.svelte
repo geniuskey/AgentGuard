@@ -15,6 +15,7 @@
   } from '$lib/ipc';
   import { setProject, refreshEffective } from '$lib/state.svelte';
   import { themeState, toggleTheme } from '$lib/theme.svelte';
+  import HelpButton from '$lib/components/HelpButton.svelte';
 
   let info = $state<AppInfo | null>(null);
   let recent = $state<ProjectRecord[]>([]);
@@ -91,35 +92,38 @@
         코딩 에이전트가 프로젝트에서 접근할 수 있는 경계를 눈으로 보고 안전하게 설정하세요.
       </p>
     </div>
-    <button
-      class="theme-toggle"
-      onclick={toggleTheme}
-      title={themeState.current === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'}
-      aria-label="테마 전환"
-    >
-      {#if themeState.current === 'dark'}
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.6" />
-          <path
-            d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3m14.8-6.8-1.6 1.6M7.8 16.2l-1.6 1.6m11.6 0-1.6-1.6M7.8 7.8 6.2 6.2"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-          />
-        </svg>
-        라이트
-      {:else}
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-          <path
-            d="M20.2 14.1A8.2 8.2 0 0 1 9.9 3.8a8.2 8.2 0 1 0 10.3 10.3Z"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linejoin="round"
-          />
-        </svg>
-        다크
-      {/if}
-    </button>
+    <div class="hero-actions">
+      <HelpButton section="home" />
+      <button
+        class="theme-toggle"
+        onclick={toggleTheme}
+        title={themeState.current === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'}
+        aria-label="테마 전환"
+      >
+        {#if themeState.current === 'dark'}
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.6" />
+            <path
+              d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3m14.8-6.8-1.6 1.6M7.8 16.2l-1.6 1.6m11.6 0-1.6-1.6M7.8 7.8 6.2 6.2"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+            />
+          </svg>
+          라이트
+        {:else}
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+            <path
+              d="M20.2 14.1A8.2 8.2 0 0 1 9.9 3.8a8.2 8.2 0 1 0 10.3 10.3Z"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linejoin="round"
+            />
+          </svg>
+          다크
+        {/if}
+      </button>
+    </div>
   </header>
 
   {#if error}
@@ -222,8 +226,13 @@
     align-items: center;
     gap: 1.1rem;
   }
-  .theme-toggle {
+  .hero-actions {
     margin-left: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .theme-toggle {
     align-self: flex-start;
     display: inline-flex;
     align-items: center;

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { getEnvStatus, type EnvStatus } from '$lib/ipc';
+  import HelpButton from '$lib/components/HelpButton.svelte';
 
   let status = $state<EnvStatus | null>(null);
   let error = $state<string | null>(null);
@@ -16,7 +17,10 @@
 </script>
 
 <main>
-  <button class="back" onclick={() => history.back()}>← 뒤로</button>
+  <div class="head">
+    <button class="back" onclick={() => history.back()}>← 뒤로</button>
+    <HelpButton section="env" compact />
+  </div>
   <h1>Bedrock / Environment</h1>
   <p class="tagline">읽기 전용 상태입니다. Agent Guard는 Secret 값을 저장하거나 전송하지 않습니다.</p>
 
@@ -63,6 +67,12 @@
     max-width: 800px;
     margin: 0 auto;
     padding: 2rem 1.5rem;
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
   }
   .back {
     background: none;

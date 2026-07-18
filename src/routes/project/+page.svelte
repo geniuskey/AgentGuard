@@ -298,7 +298,7 @@
       <button class="mini" onclick={makeReport}>Report</button>
       <button class="mini" onclick={doExport}>Export</button>
       <button class="mini" onclick={doImport}>Import</button>
-      <button class="mini" onclick={() => goto('/guide')} title="사용 가이드" aria-label="사용 가이드">?</button>
+      <button class="mini" onclick={() => goto('/guide?s=project')} title="사용 가이드" aria-label="사용 가이드">?</button>
     </div>
 
     <button class="save save-push" class:dirty={app.dirty} onclick={openSaveDialog} disabled={!app.dirty}>

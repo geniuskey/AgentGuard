@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { getAgentGlobal, inTauri, type AgentGlobal } from '$lib/ipc';
   import AgentConfigEditor from '$lib/components/AgentConfigEditor.svelte';
+  import HelpButton from '$lib/components/HelpButton.svelte';
 
   let agent = $state<AgentGlobal | null>(null);
   let error = $state<string | null>(null);
@@ -38,6 +39,7 @@
       {#if agent}{agent.name}{:else}에이전트 설정{/if}
     </div>
     {#if agent}<code class="path">{agent.path}</code>{/if}
+    <span class="help-slot"><HelpButton section="agent" compact /></span>
   </div>
 
   {#if agent}
@@ -69,6 +71,9 @@
     align-items: center;
     gap: 0.7rem;
     flex-wrap: wrap;
+  }
+  .help-slot {
+    margin-left: auto;
   }
   .back {
     background: none;
