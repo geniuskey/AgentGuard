@@ -2,6 +2,8 @@
   import type { DiffView } from '$lib/ipc';
 
   let { diff }: { diff: DiffView } = $props();
+  const uid = $props.id();
+  const scrollId = `diff-scroll-${uid}`;
 
   let showLineNumbers = $state(true);
   let diffOnly = $state(false);
@@ -111,35 +113,177 @@
 
   const cols = $derived(showLineNumbers ? 'auto minmax(0, 1fr) auto minmax(0, 1fr)' : 'minmax(0, 1fr) minmax(0, 1fr)');
   const afterStart = $derived(showLineNumbers ? 3 : 2);
+
+  // --- Minimap: whole-file overview bar (Beyond Compare style) -------------
+  // A compressed vertical strip on the left showing every changed row as a
+  // red (before/deleted) / green (after/added) mark, click-or-drag to jump.
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let minimapEl: HTMLDivElement | undefined = $state();
+  let canvasEl: HTMLCanvasElement | undefined = $state();
+  let viewTop = $state(0);
+  let viewSize = $state(1);
+
+  const DEL_COLOR = 'rgba(248, 113, 113, 0.85)';
+  const ADD_COLOR = 'rgba(52, 211, 153, 0.85)';
+
+  function drawMinimap() {
+    const wrap = minimapEl;
+    const canvas = canvasEl;
+    if (!wrap || !canvas) return;
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const items = display;
+    const total = items.length || 1;
+    const unit = h / total;
+    const barH = Math.max(unit, 1.5);
+    const half = w / 2;
+
+    items.forEach((it, idx) => {
+      if (it.kind === 'gap') return;
+      const r = it.row;
+      const y = idx * unit;
+      if (r.type === 'del' || r.type === 'mod') {
+        ctx.fillStyle = DEL_COLOR;
+        ctx.fillRect(0, y, r.type === 'mod' ? half : w, barH);
+      }
+      if (r.type === 'add' || r.type === 'mod') {
+        ctx.fillStyle = ADD_COLOR;
+        ctx.fillRect(r.type === 'mod' ? half : 0, y, r.type === 'mod' ? half : w, barH);
+      }
+    });
+  }
+
+  function updateViewport() {
+    const el = scrollEl;
+    if (!el) return;
+    const sh = el.scrollHeight || 1;
+    viewTop = el.scrollTop / sh;
+    viewSize = Math.min(1, el.clientHeight / sh);
+  }
+
+  // Center the clicked/dragged position in the scroll viewport.
+  function jumpTo(clientY: number) {
+    const wrap = minimapEl;
+    const el = scrollEl;
+    if (!wrap || !el) return;
+    const rect = wrap.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = Math.max(0, Math.min(max, fraction * el.scrollHeight - el.clientHeight / 2));
+  }
+
+  function onMinimapDown(e: MouseEvent) {
+    jumpTo(e.clientY);
+    const onMove = (ev: MouseEvent) => jumpTo(ev.clientY);
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function onMinimapKey(e: KeyboardEvent) {
+    const el = scrollEl;
+    if (!el) return;
+    if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+      el.scrollTop += e.key === 'PageDown' ? el.clientHeight : 40;
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+      el.scrollTop -= e.key === 'PageUp' ? el.clientHeight : 40;
+      e.preventDefault();
+    } else if (e.key === 'Home') {
+      el.scrollTop = 0;
+      e.preventDefault();
+    } else if (e.key === 'End') {
+      el.scrollTop = el.scrollHeight;
+      e.preventDefault();
+    }
+  }
+
+  $effect(() => {
+    display;
+    drawMinimap();
+  });
+
+  $effect(() => {
+    const el = scrollEl;
+    const wrap = minimapEl;
+    if (!el) return;
+    const onScroll = () => updateViewport();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    updateViewport();
+    const ro = new ResizeObserver(() => {
+      updateViewport();
+      drawMinimap();
+    });
+    ro.observe(el);
+    if (wrap) ro.observe(wrap);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+    };
+  });
 </script>
 
 <div class="diff">
   <div class="toolbar">
     <label class="tg"><input type="checkbox" bind:checked={showLineNumbers} /> 줄 번호</label>
     <label class="tg"><input type="checkbox" bind:checked={diffOnly} /> 변경된 줄만</label>
+    <span class="legend"><i class="sw del"></i>삭제<i class="sw add"></i>추가</span>
   </div>
 
-  <!-- Single scroll container → both sides scroll together (Beyond Compare). -->
-  <div class="scroll">
-    <div class="grid" style="grid-template-columns: {cols}">
-      <div class="hcell h-before" style="grid-column: 1 / {afterStart}">Before</div>
-      <div class="hcell h-after sep" style="grid-column: {afterStart} / -1">After</div>
+  <div class="body">
+    <!-- Whole-file overview bar: red = removed(before), green = added(after). -->
+    <div
+      class="minimap"
+      bind:this={minimapEl}
+      onmousedown={onMinimapDown}
+      onkeydown={onMinimapKey}
+      role="scrollbar"
+      aria-orientation="vertical"
+      aria-controls={scrollId}
+      aria-valuenow={Math.round(viewTop * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      tabindex="0"
+      title="변경 위치 미리보기 — 클릭/드래그로 이동"
+    >
+      <canvas bind:this={canvasEl}></canvas>
+      <div class="mm-view" style="top: {viewTop * 100}%; height: {Math.max(viewSize * 100, 3)}%"></div>
+    </div>
 
-      {#each display as d, i (i)}
-        {#if d.kind === 'gap'}
-          <div class="gap" style="grid-column: 1 / -1">⋯ 변경 없는 {d.count}줄</div>
-        {:else}
-          {@const r = d.row}
-          {#if showLineNumbers}
-            <div class="ln" class:hl-del={r.type === 'del' || r.type === 'mod'} class:empty={r.left === null}>{r.bnum ?? ''}</div>
+    <!-- Single scroll container → both sides scroll together (Beyond Compare). -->
+    <div class="scroll" id={scrollId} bind:this={scrollEl}>
+      <div class="grid" style="grid-template-columns: {cols}">
+        <div class="hcell h-before" style="grid-column: 1 / {afterStart}">Before</div>
+        <div class="hcell h-after sep" style="grid-column: {afterStart} / -1">After</div>
+
+        {#each display as d, i (i)}
+          {#if d.kind === 'gap'}
+            <div class="gap" style="grid-column: 1 / -1">⋯ 변경 없는 {d.count}줄</div>
+          {:else}
+            {@const r = d.row}
+            {#if showLineNumbers}
+              <div class="ln" class:hl-del={r.type === 'del' || r.type === 'mod'} class:empty={r.left === null}>{r.bnum ?? ''}</div>
+            {/if}
+            <div class="tx" class:hl-del={r.type === 'del' || r.type === 'mod'} class:empty={r.left === null}>{r.left ?? ''}</div>
+            {#if showLineNumbers}
+              <div class="ln rt sep" class:hl-add={r.type === 'add' || r.type === 'mod'} class:empty={r.right === null}>{r.anum ?? ''}</div>
+            {/if}
+            <div class="tx rt" class:sep={!showLineNumbers} class:hl-add={r.type === 'add' || r.type === 'mod'} class:empty={r.right === null}>{r.right ?? ''}</div>
           {/if}
-          <div class="tx" class:hl-del={r.type === 'del' || r.type === 'mod'} class:empty={r.left === null}>{r.left ?? ''}</div>
-          {#if showLineNumbers}
-            <div class="ln rt sep" class:hl-add={r.type === 'add' || r.type === 'mod'} class:empty={r.right === null}>{r.anum ?? ''}</div>
-          {/if}
-          <div class="tx rt" class:sep={!showLineNumbers} class:hl-add={r.type === 'add' || r.type === 'mod'} class:empty={r.right === null}>{r.right ?? ''}</div>
-        {/if}
-      {/each}
+        {/each}
+      </div>
     </div>
   </div>
 </div>
@@ -170,7 +314,63 @@
   .tg input {
     accent-color: var(--accent);
   }
+  .legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-left: auto;
+    font-size: 0.68rem;
+    color: var(--text-3);
+  }
+  .sw {
+    display: inline-block;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 2px;
+    margin-right: 0.15rem;
+  }
+  .sw:not(:first-child) {
+    margin-left: 0.5rem;
+  }
+  .sw.del {
+    background: rgba(248, 113, 113, 0.85);
+  }
+  .sw.add {
+    background: rgba(52, 211, 153, 0.85);
+  }
+  .body {
+    display: flex;
+    align-items: stretch;
+  }
+  .minimap {
+    position: relative;
+    flex: 0 0 16px;
+    width: 16px;
+    background: var(--bg-1);
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .minimap:focus-visible {
+    outline: 2px solid var(--accent-strong);
+    outline-offset: -2px;
+  }
+  .minimap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .mm-view {
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--text-1) 12%, transparent);
+    border-top: 1px solid var(--border-strong);
+    border-bottom: 1px solid var(--border-strong);
+  }
   .scroll {
+    flex: 1;
+    min-width: 0;
     overflow: auto;
     max-height: 45vh;
   }

@@ -21,6 +21,7 @@ pub mod profiles;
 pub mod report;
 pub mod risk;
 pub mod settings;
+pub mod settings_lint;
 pub mod simulate;
 
 pub use model::{AppliesTo, Policy, PolicyRule, Scope, Tool, FILE_ACCESS_TOOLS};

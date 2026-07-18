@@ -11,7 +11,7 @@ use agentguard_core::model::{AppliesTo, Policy, PolicyRule, RiskLevel, Scope};
 use agentguard_core::policy::{self, Permissions};
 use agentguard_core::risk::{self, RiskScore};
 use agentguard_core::simulate::{self, SimResult};
-use agentguard_core::{backup, paths, settings};
+use agentguard_core::{backup, paths, settings, settings_lint};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -1151,6 +1151,13 @@ pub fn config_set_value(
             Ok(s)
         }
     }
+}
+
+/// Lint Claude Code settings text: known-key type/enum checks + plaintext-secret
+/// detection in `env`. Delegates to the unit-tested core module.
+#[tauri::command]
+pub fn lint_claude_settings(text: String) -> Result<Vec<settings_lint::LintItem>, String> {
+    Ok(settings_lint::lint_text(&text))
 }
 
 // --- Agent security status summary ----------------------------------------------
