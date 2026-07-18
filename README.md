@@ -60,6 +60,7 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
 | [docs/ui-spec.md](docs/ui-spec.md) | 화면·상태·컴포넌트 명세 |
 | [docs/tech-stack.md](docs/tech-stack.md) | 기술 스택 트레이드오프 & 권장안 (미확정) |
 | [docs/roadmap.md](docs/roadmap.md) | 수직 슬라이스 우선 마일스톤 + 커버리지 추적표 |
+| [docs/claude-code-settings-plan.md](docs/claude-code-settings-plan.md) | Claude Code 설정 확장 검토 — 갭 분석, Phase 계획, 개선 백로그 |
 | [docs/open-issues.md](docs/open-issues.md) | 오픈 이슈 결정 & 근거 |
 
 ## Key Design Decisions

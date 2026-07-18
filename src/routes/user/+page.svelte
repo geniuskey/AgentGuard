@@ -7,11 +7,13 @@
   import RawJsonEditor from '$lib/components/RawJsonEditor.svelte';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
   import SystemExplorer from '$lib/components/SystemExplorer.svelte';
+  import ClaudeSettingsPanel from '$lib/components/ClaudeSettingsPanel.svelte';
 
   // User settings (`~/.claude/settings.json`) are global — they apply before any
   // project is selected. Editing them needs no open project, so we clear project
-  // state and edit the user scope directly.
-  let mode = $state<'rules' | 'raw'>('rules');
+  // state and edit the user scope directly. `rules` edits the permissions block,
+  // `general` everything else (model, env, …), `raw` the full JSON.
+  let mode = $state<'rules' | 'general' | 'raw'>('rules');
   let error = $state<string | null>(null);
   let diff = $state<DiffView | null>(null);
   let saving = $state(false);
@@ -36,8 +38,9 @@
   }
 
   // Re-sync structured rules from disk when returning to Rules mode with no unsaved
-  // edits, so a Raw-JSON save made in between is reflected (and never overwritten).
-  async function setMode(m: 'rules' | 'raw') {
+  // edits, so a Raw-JSON or general-settings save made in between is reflected
+  // (and never overwritten).
+  async function setMode(m: 'rules' | 'general' | 'raw') {
     if (m === 'rules' && mode !== 'rules' && !app.dirty) await loadUserRules();
     mode = m;
   }
@@ -90,7 +93,8 @@
     <code class="path">~/.claude/settings.json</code>
 
     <div class="mode">
-      <button class:active={mode === 'rules'} onclick={() => setMode('rules')}>규칙</button>
+      <button class:active={mode === 'rules'} onclick={() => setMode('rules')}>접근 권한</button>
+      <button class:active={mode === 'general'} onclick={() => setMode('general')}>일반 설정</button>
       <button class:active={mode === 'raw'} onclick={() => setMode('raw')}>Raw JSON</button>
     </div>
 
@@ -126,6 +130,8 @@
     <div class="editor">
       {#if mode === 'rules'}
         <RuleListEditor scope="user" />
+      {:else if mode === 'general'}
+        <ClaudeSettingsPanel onsaved={() => { if (!app.dirty) loadUserRules(); }} />
       {:else}
         <RawJsonEditor lockScope="user" />
       {/if}

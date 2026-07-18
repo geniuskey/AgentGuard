@@ -74,6 +74,7 @@ fn main() {
             commands::agent_security_status,
             commands::config_get,
             commands::config_set_value,
+            commands::lint_claude_settings,
             commands::web_block_specifiers,
             commands::list_drives,
             commands::list_system_dir,

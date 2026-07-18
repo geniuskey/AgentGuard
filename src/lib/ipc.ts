@@ -460,6 +460,19 @@ export async function configSetValue(
   return invoke<string>('config_set_value', { text, format, path, value: value ?? null });
 }
 
+/** One lint finding on Claude Code settings text (known-key type/enum + secret checks). */
+export interface LintItem {
+  level: 'warn' | 'info';
+  /** Dotted key path, e.g. `env.MY_TOKEN` or `permissions.defaultMode`. */
+  path: string;
+  message: string;
+}
+
+export async function lintClaudeSettings(text: string): Promise<LintItem[]> {
+  if (!inTauri()) return [];
+  return invoke<LintItem[]>('lint_claude_settings', { text });
+}
+
 /** The web/network deny specifiers a "block web access" toggle applies (Claude Code). */
 export async function webBlockSpecifiers(): Promise<string[]> {
   if (!inTauri()) return ['WebSearch', 'WebFetch', 'Bash(curl:*)', 'Bash(wget:*)'];
