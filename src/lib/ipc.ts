@@ -5,7 +5,7 @@
 export type Policy = 'allow' | 'ask' | 'deny';
 export type ScopeName = 'user' | 'project' | 'local';
 export type AppliesTo = 'file' | 'folder' | 'folder-and-children' | 'pattern';
-export type Tool = 'Read' | 'Edit' | 'Write' | 'Grep' | 'Glob' | 'NotebookEdit';
+export type Tool = 'Read' | 'Edit';
 
 export interface AppInfo {
   name: string;
