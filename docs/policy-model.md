@@ -59,12 +59,16 @@ settings.json permissions (Tool(specifier) 중심)
 
 ## 3. FILE_ACCESS_TOOLS (D1의 핵심 상수)
 
-경로 지정이 가능한 Claude Code 도구만 대상으로 한다:
+Claude Code의 파일 권한 검사에 **실제로 매칭되는** 경로 지정 도구만 대상으로 한다:
 
 ```
-FILE_ACCESS_TOOLS = [Read, Edit, Write, Grep, Glob, NotebookEdit]
+FILE_ACCESS_TOOLS = [Read, Edit]
 ```
 
+- Claude Code 문서 기준, 파일 권한 검사는 `Read(path)`·`Edit(path)` 규칙만 매칭한다.
+  `Write(path)`·`Glob(path)`·`NotebookEdit(path)`는 문법상 허용되지만 매칭되지 않으며
+  (Claude Code가 시작 시 경고), `Grep`은 별도 규칙 없이 `Read` 규칙을 준용한다. 따라서
+  경로 정책은 `Read`·`Edit`로만 팬아웃한다. (`Edit` 규칙이 모든 파일 편집 도구를 포괄한다.)
 - `Bash`(명령 기반), `WebFetch`(도메인 기반) 등은 경로 정책으로 표현할 수 없으므로 **MVP 범위 밖**.
   파싱 시 만나면 "AG 미관리 규칙"으로 **원문 보존**한다(삭제 금지).
 - 이 집합은 Claude Code adapter의 상수이며, 다른 에이전트 adapter는 자체 집합을 정의한다.
@@ -85,14 +89,12 @@ User scope는 절대/홈 경로를 쓴다.
 | `pattern` | 입력 패턴 그대로 (`./**/*.env` 등) |
 
 ### 4.2 팬아웃 규칙
-`tools == null`이면 FILE_ACCESS_TOOLS 6개 전체로 확장, 부분 집합이면 그 도구만.
+`tools == null`이면 FILE_ACCESS_TOOLS 2개 전체로 확장, 부분 집합이면 그 도구만.
 
 ```
-Allow  "src/**"      → permissions.allow += [
-                         "Read(./src/**)", "Edit(./src/**)", "Write(./src/**)",
-                         "Grep(./src/**)", "Glob(./src/**)", "NotebookEdit(./src/**)" ]
-Deny   "secrets/**"  → permissions.deny  += [ 위 6개 도구의 ./secrets/** ]
-Ask    "docs/**"     → permissions.ask   += [ 위 6개 도구의 ./docs/** ]
+Allow  "src/**"      → permissions.allow += [ "Read(./src/**)", "Edit(./src/**)" ]
+Deny   "secrets/**"  → permissions.deny  += [ 위 2개 도구의 ./secrets/** ]
+Ask    "docs/**"     → permissions.ask   += [ 위 2개 도구의 ./docs/** ]
 ```
 
 ### 4.3 검증 예제 (요구사항서 8.1 프로젝트 기준)
@@ -114,16 +116,16 @@ Ask    "docs/**"     → permissions.ask   += [ 위 6개 도구의 ./docs/** ]
 {
   "permissions": {
     "allow": [
-      "Read(./src/**)", "Edit(./src/**)", "Write(./src/**)", "Grep(./src/**)", "Glob(./src/**)", "NotebookEdit(./src/**)",
-      "Read(./tests/**)", "Edit(./tests/**)", "Write(./tests/**)", "Grep(./tests/**)", "Glob(./tests/**)", "NotebookEdit(./tests/**)",
-      "Read(./README.md)", "Edit(./README.md)", "Write(./README.md)", "Grep(./README.md)", "Glob(./README.md)", "NotebookEdit(./README.md)"
+      "Read(./src/**)", "Edit(./src/**)",
+      "Read(./tests/**)", "Edit(./tests/**)",
+      "Read(./README.md)", "Edit(./README.md)"
     ],
     "ask": [
-      "Read(./docs/**)", "Edit(./docs/**)", "Write(./docs/**)", "Grep(./docs/**)", "Glob(./docs/**)", "NotebookEdit(./docs/**)"
+      "Read(./docs/**)", "Edit(./docs/**)"
     ],
     "deny": [
-      "Read(./secrets/**)", "Edit(./secrets/**)", "Write(./secrets/**)", "Grep(./secrets/**)", "Glob(./secrets/**)", "NotebookEdit(./secrets/**)",
-      "Read(./.env)", "Edit(./.env)", "Write(./.env)", "Grep(./.env)", "Glob(./.env)", "NotebookEdit(./.env)"
+      "Read(./secrets/**)", "Edit(./secrets/**)",
+      "Read(./.env)", "Edit(./.env)"
     ]
   }
 }

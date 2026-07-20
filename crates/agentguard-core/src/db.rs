@@ -429,7 +429,7 @@ mod tests {
         r1.reason = Some("source".into());
         r1.risk_level = Some(RiskLevel::Low);
         let mut r2 = PolicyRule::new("notes", Policy::Deny, AppliesTo::Folder);
-        r2.tools = Some(vec![Tool::Read, Tool::Grep]);
+        r2.tools = Some(vec![Tool::Read]);
 
         save_project_paths(&mut conn, "p1", Scope::Project, &[r1, r2], "t0").unwrap();
         let loaded = load_project_paths(&conn, "p1").unwrap();
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(src.rule.risk_level, Some(RiskLevel::Low));
 
         let notes = loaded.iter().find(|x| x.rule.path == "notes").unwrap();
-        assert_eq!(notes.rule.tools, Some(vec![Tool::Read, Tool::Grep]));
+        assert_eq!(notes.rule.tools, Some(vec![Tool::Read]));
 
         // Re-save replaces (not duplicates).
         save_project_paths(&mut conn, "p1", Scope::Project, &[], "t1").unwrap();

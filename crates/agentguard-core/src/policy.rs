@@ -269,10 +269,8 @@ mod tests {
 
         // Spot-check exact canonical strings.
         assert!(perms.allow.contains(&"Read(./src/**)".to_string()));
-        assert!(perms
-            .allow
-            .contains(&"NotebookEdit(./README.md)".to_string()));
-        assert!(perms.deny.contains(&"Grep(./.env)".to_string()));
+        assert!(perms.allow.contains(&"Edit(./README.md)".to_string()));
+        assert!(perms.deny.contains(&"Edit(./.env)".to_string()));
     }
 
     #[test]
@@ -310,16 +308,13 @@ mod tests {
     #[test]
     fn partial_toolset_keeps_tool_specific_rule() {
         let perms = Permissions {
-            allow: vec![
-                "Read(./notes/**)".to_string(),
-                "Grep(./notes/**)".to_string(),
-            ],
+            allow: vec!["Read(./notes/**)".to_string()],
             ..Default::default()
         };
         let (rules, _) = from_permissions(&perms);
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].path, "notes");
-        assert_eq!(rules[0].tools, Some(vec![Tool::Read, Tool::Grep]));
+        assert_eq!(rules[0].tools, Some(vec![Tool::Read]));
     }
 
     #[test]

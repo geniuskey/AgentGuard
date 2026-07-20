@@ -7,7 +7,7 @@
 
 ## #1. Claude Code permission 규칙 변환 형식
 **결정(해소).** `permissions.allow/deny/ask`는 `Tool(specifier)` 문자열 배열이며,
-경로 정책은 `FILE_ACCESS_TOOLS = [Read, Edit, Write, Grep, Glob, NotebookEdit]`로 팬아웃한다.
+경로 정책은 `FILE_ACCESS_TOOLS = [Read, Edit]`로 팬아웃한다(Claude Code 파일 권한 검사가 매칭하는 도구는 Read·Edit뿐).
 상세: `policy-model.md` (D1). 검증 예제 포함.
 - 남은 리스크: Claude Code가 도구 목록/스키마를 바꾸면 상수 갱신 필요 → adapter로 격리.
 

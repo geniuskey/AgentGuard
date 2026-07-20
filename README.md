@@ -66,7 +66,7 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
 ## Key Design Decisions
 
 - **경로 정책은 `Tool(specifier)`로 팬아웃** — Claude Code는 도구 중심 permission을
-  사용하므로 "Allow `src/`"는 `Read/Edit/Write/Grep/Glob/NotebookEdit(./src/**)`로 확장된다.
+  사용하므로 "Allow `src/`"는 `Read/Edit(./src/**)`로 확장된다(파일 권한 검사가 매칭하는 도구는 Read·Edit뿐).
 - **정책은 명시적 경로 규칙만으로 통제** — 민감 경로는 폴더 단위 Deny, 작업 폴더는 Allow.
   deny-by-default 모드(`defaultMode: "dontAsk"`)는 폐기했고, 파일에 남은 값은 저장 시 제거한다.
   매칭 규칙이 없는 경로는 Claude Code 기본 동작(실행 시 확인)을 따른다.

@@ -39,15 +39,15 @@ pub enum AppliesTo {
     Pattern,
 }
 
-/// Claude Code tools that accept a path/pattern specifier.
+/// Claude Code tools that accept a path/pattern specifier and are matched by its
+/// file-permission checks. Per the Claude Code docs, only `Read` and `Edit` rules
+/// are matched — `Write(path)`, `Glob(path)`, and `NotebookEdit(path)` are accepted
+/// but never matched (Claude Code warns at startup), and `Grep` falls back to `Read`
+/// rules. So the path-policy model uses only these two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Tool {
     Read,
     Edit,
-    Write,
-    Grep,
-    Glob,
-    NotebookEdit,
 }
 
 impl Tool {
@@ -55,10 +55,6 @@ impl Tool {
         match self {
             Tool::Read => "Read",
             Tool::Edit => "Edit",
-            Tool::Write => "Write",
-            Tool::Grep => "Grep",
-            Tool::Glob => "Glob",
-            Tool::NotebookEdit => "NotebookEdit",
         }
     }
 
@@ -67,10 +63,6 @@ impl Tool {
         Some(match s {
             "Read" => Tool::Read,
             "Edit" => Tool::Edit,
-            "Write" => Tool::Write,
-            "Grep" => Tool::Grep,
-            "Glob" => Tool::Glob,
-            "NotebookEdit" => Tool::NotebookEdit,
             _ => return None,
         })
     }
@@ -79,14 +71,7 @@ impl Tool {
 /// The fixed set of file-access tools a path rule fans out into (D1).
 /// Order is significant: it defines the deterministic emission order used when
 /// writing `settings.json`, keeping diffs stable.
-pub const FILE_ACCESS_TOOLS: [Tool; 6] = [
-    Tool::Read,
-    Tool::Edit,
-    Tool::Write,
-    Tool::Grep,
-    Tool::Glob,
-    Tool::NotebookEdit,
-];
+pub const FILE_ACCESS_TOOLS: [Tool; 2] = [Tool::Read, Tool::Edit];
 
 /// Risk level annotation (app metadata, stored in SQLite only — see D3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
