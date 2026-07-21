@@ -7,6 +7,8 @@
   import type { ScopeName } from '$lib/ipc';
   import { readRawSettings, saveRawSettings, validateJson } from '$lib/ipc';
   import { app } from '$lib/state.svelte';
+  import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
+  import { confirmDiscardChanges } from '$lib/unsaved';
 
   // `lockScope` pins the editor to one scope (used by the project-less User settings
   // page) and hides the scope switcher.
@@ -15,30 +17,45 @@
   let picked = $state<ScopeName>('project');
   const scope = $derived(lockScope ?? picked);
   let text = $state('');
+  let onDisk = $state('');
   let error = $state<string | null>(null);
   let status = $state<string | null>(null);
   let loading = $state(false);
+  let loadSequence = 0;
+
+  const dirty = $derived(!loading && text !== onDisk);
+  const unsavedId = $derived(`raw-settings-${lockScope ?? 'project'}`);
 
   const scopes: ScopeName[] = ['user', 'project', 'local'];
 
-  async function load() {
+  async function load(target: ScopeName) {
+    const sequence = ++loadSequence;
     loading = true;
     status = null;
     error = null;
     try {
-      text = await readRawSettings(app.projectRoot, scope);
+      const loaded = await readRawSettings(app.projectRoot, target);
+      if (sequence !== loadSequence) return;
+      text = loaded;
+      onDisk = loaded;
     } catch (e) {
       error = String(e);
     } finally {
-      loading = false;
+      if (sequence === loadSequence) loading = false;
     }
   }
 
   $effect(() => {
     // Reload whenever the scope changes (or on first mount).
-    scope;
-    load();
+    const target = scope;
+    load(target);
   });
+
+  function selectScope(next: ScopeName) {
+    if (next === scope) return;
+    if (!confirmDiscardChanges(dirty, window.confirm.bind(window))) return;
+    picked = next;
+  }
 
   async function validate() {
     error = await validateJson(text);
@@ -71,11 +88,14 @@
       });
       status = `저장됨 → ${res.written}`;
       error = null;
+      onDisk = text;
     } catch (e) {
       error = String(e);
     }
   }
 </script>
+
+<UnsavedMarker id={unsavedId} when={dirty} />
 
 <div class="panel">
   <div class="bar">
@@ -84,14 +104,16 @@
     {:else}
       <div class="segmented">
         {#each scopes as s (s)}
-          <button class:active={scope === s} onclick={() => (picked = s)}>{s}</button>
+          <button class:active={scope === s} onclick={() => selectScope(s)}>{s}</button>
         {/each}
       </div>
     {/if}
     <div class="tools">
       <button onclick={validate}>Validate</button>
       <button onclick={format}>Format</button>
-      <button class="primary" onclick={save}>Save</button>
+      <button class="primary" class:dirty onclick={save} disabled={!dirty}>
+        {dirty ? 'Save' : 'Saved'}
+      </button>
     </div>
   </div>
 
@@ -116,6 +138,7 @@
   .bar {
     display: flex;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-bottom: 0.5rem;
   }
@@ -159,8 +182,12 @@
   .tools {
     display: flex;
     gap: 0.35rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
   .tools button {
+    flex-shrink: 0;
     padding: 0.28rem 0.65rem;
     background: var(--bg-2);
     border: 1px solid var(--border-strong);
@@ -181,6 +208,12 @@
   }
   .tools .primary:hover {
     background: #3b76ee;
+  }
+  .tools .primary:not(.dirty) {
+    background: var(--bg-2);
+    border-color: var(--border);
+    color: var(--text-3);
+    cursor: default;
   }
   textarea {
     flex: 1;

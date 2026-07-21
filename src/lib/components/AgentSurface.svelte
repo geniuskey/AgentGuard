@@ -22,7 +22,7 @@
   <div class="head">
     <p class="intro">
       Hooks와 MCP 서버는 경로 권한 규칙 <b>밖에서</b> 동작합니다. 읽기 전용으로 표시하며,
-      존재 시 리스크 점수에 반영됩니다.
+      실제 활성 상태와 핸들러 위험도를 리스크 점수에 반영합니다.
     </p>
     <button class="refresh" onclick={load}>새로고침</button>
   </div>
@@ -36,14 +36,15 @@
         {#if surface.hooks.length}<span class="cnt warn">{surface.hooks.length}</span>{/if}
       </h4>
       {#if surface.hooks.length}
-        <div class="warnbox">
-          ⚠ 훅은 도구 실행 전후에 <b>임의 셸 명령</b>을 실행합니다. 아래 명령을 반드시 확인하세요.
-        </div>
+        <div class="warnbox">⚠ 훅은 명령·에이전트·HTTP·MCP 도구를 자동 실행할 수 있습니다.</div>
         {#each surface.hooks as h (h.scope + h.event + (h.matcher ?? '') + h.command)}
           <div class="row">
             <span class="scope">{h.scope}</span>
             <span class="event">{h.event}</span>
             {#if h.matcher}<span class="matcher">{h.matcher}</span>{/if}
+            <span class="transport">{h.handlerType}</span>
+            <span class:risk-high={h.riskLevel === 'high'} class="risk-tag">{h.riskLevel}</span>
+            {#if h.usesWeb}<span class="web">웹 접근</span>{/if}
             <code>{h.command}</code>
           </div>
         {/each}
@@ -58,7 +59,7 @@
         {#if surface.mcpServers.length}<span class="cnt">{surface.mcpServers.length}</span>{/if}
       </h4>
       {#if surface.mcpServers.length}
-        {#if surface.mcpServers.some((s) => s.usesWeb)}
+        {#if surface.mcpServers.some((s) => s.active && s.usesWeb)}
           <div class="warnbox">
             ⚠ 일부 MCP 서버는 <b>외부 네트워크와 통신</b>합니다 (예: context7, 원격 서버).
             프롬프트·코드가 밖으로 나갈 수 있으니 신뢰할 수 있는 서버만 사용하세요.
@@ -68,7 +69,10 @@
           <div class="row">
             <span class="name">{s.name}</span>
             <span class="transport">{s.transport}</span>
-            {#if s.usesWeb}<span class="web">웹 접근</span>{/if}
+            <span class:inactive={!s.active} class="active-state" title={s.statusReason}>
+              {s.active ? '활성' : '비활성'}
+            </span>
+            {#if s.active && s.usesWeb}<span class="web">웹 접근</span>{/if}
             <code>{s.target}</code>
             <span class="src">{s.source}</span>
           </div>
@@ -210,6 +214,25 @@
     font-size: 0.64rem;
     font-weight: 700;
     flex-shrink: 0;
+  }
+  .risk-tag,
+  .active-state {
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--ask);
+    font-size: 0.64rem;
+    padding: 0.02rem 0.4rem;
+    flex-shrink: 0;
+  }
+  .risk-tag.risk-high {
+    color: var(--deny);
+    border-color: rgba(248, 113, 113, 0.35);
+  }
+  .active-state {
+    color: var(--allow);
+  }
+  .active-state.inactive {
+    color: var(--text-3);
   }
   code {
     font-family: var(--font-mono);

@@ -15,8 +15,12 @@
 
 - **평가 순서: deny > ask > allow**, first-match.
 - **deny는 어느 Scope에서든 최우선**. 더 구체적인 allow가 있어도 deny가 이긴다.
-- **Scope 우선순위(설정 병합): Local > Project > User.** 단, 위 deny 우선 규칙이 Scope보다 강하다.
+- **Scope 우선순위(설정 병합): Managed file > Local > Project > User.** 단, 위 deny 우선 규칙이 Scope보다 강하다.
   즉 User의 deny가 Local의 allow를 이긴다.
+- Managed는 Windows file-based tier를 읽기 전용으로 표시한다. server/MDM/registry 정책은
+  이 오프라인 Preview가 발견하지 못할 수 있다.
+- Managed 설정의 `allowManagedPermissionRulesOnly: true`가 감지되면 User/Project/Local 권한
+  규칙은 파일에 보존·표시하되 effective 정책과 시뮬레이션 계산에서는 제외한다.
 - 매칭되는 규칙이 하나도 없으면 Claude Code 기본 동작(실행 시 확인, `ask`)을 따른다.
 
 ---
@@ -58,10 +62,10 @@ deny-by-default를 구현했다. 하지만 이는 모드 토글로 관리돼 사
 
 ```
 입력: targetPath, (선택) tool
-      userRules, projectRules, localRules  (각 scope의 allow/ask/deny)
+      managedRules, userRules, projectRules, localRules  (각 scope의 allow/ask/deny)
 
 절차 (도구별 또는 대표 도구 Read 기준):
-1. 세 scope의 모든 규칙을 (policy, scope, ruleString, matches(targetPath)) 로 평탄화.
+1. 네 scope의 모든 규칙을 (policy, scope, ruleString, matches(targetPath)) 로 평탄화.
 2. targetPath에 매칭되는 규칙만 남긴다 (gitignore 스타일 glob 매칭).
 3. deny 매칭이 하나라도 있으면      → EFFECTIVE = DENY  (출처 = 매칭된 deny 규칙들)
    else ask 매칭이 하나라도 있으면  → EFFECTIVE = ASK
@@ -110,7 +114,7 @@ deny-by-default를 구현했다. 하지만 이는 모드 토글로 관리돼 사
 | **Denied** | 최종 DENY 경로 목록 (⛔), deny 출처 scope 표시 |
 | **Ask** | 최종 ASK 경로 목록 (❓) |
 | **Conflicts** | 4장 충돌 목록, 심각도순 정렬 |
-| **By Scope** | User/Project/Local 각각의 기여 규칙 |
+| **By Scope** | Managed/User/Project/Local 각각의 기여 규칙(Managed는 읽기 전용) |
 | **Raw Rules** | 실제 생성될 `Tool(specifier)` 문자열 (읽기 전용 미리보기) |
 
 각 항목에 필수 정보(요구사항서 8.6): 최종 정책 / 출처 Scope / 명시·상속 / 충돌 여부 / Deny 우선 여부.

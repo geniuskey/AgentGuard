@@ -17,6 +17,8 @@
     type LintItem
   } from '$lib/ipc';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
+  import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
+  import { modalFocus } from '$lib/modal';
 
   interface Option {
     v: unknown; // null = 키 제거(기본값으로)
@@ -370,6 +372,8 @@
   const lintInfos = $derived(lint.filter((l) => l.level === 'info'));
 </script>
 
+<UnsavedMarker id="claude-general" when={dirty} />
+
 <div class="panel">
   <div class="bar">
     <p class="intro">
@@ -519,13 +523,20 @@
 </div>
 
 {#if diff}
-  <div class="modal-bg" role="presentation" onclick={() => (diff = null)}>
-    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-      <h3>저장 전 변경 확인 — 일반 설정</h3>
+  <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) diff = null; }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="claude-general-save-title"
+      tabindex="-1"
+      use:modalFocus={() => (diff = null)}
+    >
+      <h3 id="claude-general-save-title">저장 전 변경 확인 — 일반 설정</h3>
       <p class="fp">{diff.path}</p>
       {#if diff.changed}<DiffViewer {diff} />{:else}<p class="nochg">변경 사항이 없습니다.</p>{/if}
       <div class="modal-actions">
-        <button onclick={() => (diff = null)}>취소</button>
+        <button data-modal-initial onclick={() => (diff = null)}>취소</button>
         <button class="primary" onclick={confirmSave} disabled={saving || !diff.changed}>
           {saving ? '저장 중…' : '백업 후 저장'}
         </button>

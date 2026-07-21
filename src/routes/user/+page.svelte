@@ -9,6 +9,9 @@
   import SystemExplorer from '$lib/components/SystemExplorer.svelte';
   import ClaudeSettingsPanel from '$lib/components/ClaudeSettingsPanel.svelte';
   import HelpButton from '$lib/components/HelpButton.svelte';
+  import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
+  import { modalFocus } from '$lib/modal';
+  import { confirmDiscardChanges, isUnsavedSource } from '$lib/unsaved';
 
   // User settings (`~/.claude/settings.json`) are global — they apply before any
   // project is selected. Editing them needs no open project, so we clear project
@@ -42,6 +45,14 @@
   // edits, so a Raw-JSON or general-settings save made in between is reflected
   // (and never overwritten).
   async function setMode(m: 'rules' | 'general' | 'raw') {
+    if (m === mode) return;
+    const localSource = mode === 'general' ? 'claude-general' : mode === 'raw' ? 'raw-settings-user' : null;
+    if (
+      localSource &&
+      !confirmDiscardChanges(isUnsavedSource(localSource), window.confirm.bind(window))
+    ) {
+      return;
+    }
     if (m === 'rules' && mode !== 'rules' && !app.dirty) await loadUserRules();
     mode = m;
   }
@@ -86,6 +97,7 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+<UnsavedMarker id="user-rules" when={app.dirty} />
 
 <main>
   <div class="top">
@@ -143,13 +155,20 @@
 </main>
 
 {#if diff}
-  <div class="modal-bg" role="presentation" onclick={() => (diff = null)}>
-    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-      <h3>저장 전 변경 확인 — user scope</h3>
+  <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) diff = null; }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="user-save-title"
+      tabindex="-1"
+      use:modalFocus={() => (diff = null)}
+    >
+      <h3 id="user-save-title">저장 전 변경 확인 — user scope</h3>
       <p class="fp">{diff.path}</p>
       {#if diff.changed}<DiffViewer {diff} />{:else}<p class="nochg">변경 사항이 없습니다.</p>{/if}
       <div class="modal-actions">
-        <button onclick={() => (diff = null)}>취소</button>
+        <button data-modal-initial onclick={() => (diff = null)}>취소</button>
         <button class="primary" onclick={confirmSave} disabled={saving || !diff.changed}>
           {saving ? '저장 중…' : '백업 후 저장'}
         </button>

@@ -6,6 +6,7 @@
 use crate::model::Scope;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// One configured hook command.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -16,7 +17,13 @@ pub struct HookEntry {
     pub event: String,
     /// Tool matcher, when the event carries one (e.g. `"Bash"`, `"Edit|Write"`).
     pub matcher: Option<String>,
+    /// `command` | `prompt` | `agent` | `http` | `mcp`.
+    pub handler_type: String,
+    /// Human-readable executable command, prompt, URL, or MCP tool name.
     pub command: String,
+    /// `high` for automatic code/tool/network execution, `medium` for prompt-only hooks.
+    pub risk_level: String,
+    pub uses_web: bool,
 }
 
 /// One configured MCP server.
@@ -33,6 +40,10 @@ pub struct McpServer {
     /// Likely talks to the internet: remote transports always do; stdio servers
     /// are flagged by a name/command heuristic (context7, fetch, search, ...).
     pub uses_web: bool,
+    /// Whether Claude Code will currently load this server. Project `.mcp.json`
+    /// entries require explicit approval in settings.
+    pub active: bool,
+    pub status_reason: String,
 }
 
 /// Name/command fragments of stdio MCP servers known to reach the internet.
@@ -80,12 +91,36 @@ pub fn hooks_from_settings(scope: Scope, raw: &Value) -> Vec<HookEntry> {
                 continue;
             };
             for hook in hooks {
-                if let Some(command) = hook.get("command").and_then(|c| c.as_str()) {
+                let handler_type = hook
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("command");
+                let target = match handler_type {
+                    "command" => hook.get("command").and_then(Value::as_str),
+                    "prompt" | "agent" => hook.get("prompt").and_then(Value::as_str),
+                    "http" => hook.get("url").and_then(Value::as_str),
+                    "mcp" => hook
+                        .get("tool")
+                        .or_else(|| hook.get("toolName"))
+                        .and_then(Value::as_str),
+                    _ => None,
+                };
+                if let Some(command) = target {
+                    let uses_web = handler_type == "http"
+                        || (handler_type == "command" && stdio_uses_web("hook", command));
+                    let risk_level = if handler_type == "prompt" {
+                        "medium"
+                    } else {
+                        "high"
+                    };
                     out.push(HookEntry {
                         scope,
                         event: event.clone(),
                         matcher: matcher.clone(),
+                        handler_type: handler_type.to_string(),
                         command: command.to_string(),
+                        risk_level: risk_level.to_string(),
+                        uses_web,
                     });
                 }
             }
@@ -139,9 +174,67 @@ pub fn mcp_servers_from_value(source: &str, servers: &Value) -> Vec<McpServer> {
             transport,
             target,
             uses_web,
+            active: !source.contains("project"),
+            status_reason: if source.contains("project") {
+                "프로젝트 MCP 승인 대기".to_string()
+            } else {
+                "사용자 설정에서 활성".to_string()
+            },
         });
     }
     out
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectMcpApproval {
+    pub enable_all: bool,
+    pub enabled: BTreeSet<String>,
+    pub disabled: BTreeSet<String>,
+}
+
+/// Resolve the three settings keys Claude Code uses to approve project
+/// `.mcp.json` entries. Values are supplied from low to high precedence.
+pub fn project_mcp_approval(settings: &[&Value]) -> ProjectMcpApproval {
+    let mut approval = ProjectMcpApproval::default();
+    for raw in settings {
+        if let Some(enabled) = raw
+            .get("enableAllProjectMcpServers")
+            .and_then(Value::as_bool)
+        {
+            approval.enable_all = enabled;
+        }
+        for (key, target) in [
+            ("enabledMcpjsonServers", &mut approval.enabled),
+            ("disabledMcpjsonServers", &mut approval.disabled),
+        ] {
+            if let Some(names) = raw.get(key).and_then(Value::as_array) {
+                target.extend(names.iter().filter_map(Value::as_str).map(str::to_string));
+            }
+        }
+    }
+    approval
+}
+
+pub fn apply_project_mcp_approval(servers: &mut [McpServer], approval: &ProjectMcpApproval) {
+    for server in servers
+        .iter_mut()
+        .filter(|server| server.source.contains("project"))
+    {
+        if approval.disabled.contains(&server.name) {
+            server.active = false;
+            server.status_reason = "disabledMcpjsonServers에서 비활성".to_string();
+        } else if approval.enable_all || approval.enabled.contains(&server.name) {
+            server.active = true;
+            server.status_reason = if approval.enable_all {
+                "모든 프로젝트 MCP 서버 승인".to_string()
+            } else {
+                "enabledMcpjsonServers에서 승인".to_string()
+            };
+        } else {
+            server.active = false;
+            server.status_reason = "프로젝트 MCP 승인 대기".to_string();
+        }
+    }
 }
 
 /// Parse `.mcp.json` text (root `{ "mcpServers": { ... } }`).
@@ -190,6 +283,8 @@ mod tests {
         assert_eq!(hooks[0].event, "PreToolUse");
         assert_eq!(hooks[0].matcher.as_deref(), Some("Bash"));
         assert_eq!(hooks[0].command, "echo pre");
+        assert_eq!(hooks[0].handler_type, "command");
+        assert_eq!(hooks[0].risk_level, "high");
         assert_eq!(hooks[1].event, "SessionStart");
         assert_eq!(hooks[1].matcher, None);
     }
@@ -249,5 +344,50 @@ mod tests {
         // Entries without command/url are skipped.
         let text = r#"{ "mcpServers": { "weird": { "note": "nothing runnable" } } }"#;
         assert!(parse_mcp_json("x", text).is_empty());
+    }
+
+    #[test]
+    fn prompt_http_agent_and_mcp_hook_handlers_are_visible() {
+        let raw = json!({
+            "hooks": {
+                "Stop": [{ "hooks": [
+                    { "type": "prompt", "prompt": "Check $ARGUMENTS" },
+                    { "type": "agent", "prompt": "Verify tests" },
+                    { "type": "http", "url": "https://hooks.example.test/audit" },
+                    { "type": "mcp", "tool": "mcp__audit__record" }
+                ] }]
+            }
+        });
+        let hooks = hooks_from_settings(Scope::Project, &raw);
+        assert_eq!(hooks.len(), 4);
+        assert_eq!(hooks[0].risk_level, "medium");
+        assert!(hooks[2].uses_web);
+        assert_eq!(hooks[3].handler_type, "mcp");
+    }
+
+    #[test]
+    fn project_mcp_approval_respects_disabled_precedence() {
+        let user = json!({ "enableAllProjectMcpServers": true });
+        let local = json!({
+            "enabledMcpjsonServers": ["safe", "blocked"],
+            "disabledMcpjsonServers": ["blocked"]
+        });
+        let approval = project_mcp_approval(&[&user, &local]);
+        let mut servers = parse_mcp_json(
+            "project (.mcp.json)",
+            r#"{ "mcpServers": {
+                "safe": { "command": "safe-mcp" },
+                "blocked": { "command": "blocked-mcp" }
+            } }"#,
+        );
+        apply_project_mcp_approval(&mut servers, &approval);
+        let safe = servers.iter().find(|server| server.name == "safe").unwrap();
+        let blocked = servers
+            .iter()
+            .find(|server| server.name == "blocked")
+            .unwrap();
+        assert!(safe.active);
+        assert!(!blocked.active);
+        assert!(blocked.status_reason.contains("비활성"));
     }
 }

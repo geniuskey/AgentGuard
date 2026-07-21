@@ -14,7 +14,8 @@
 ## #2. `settings.local.json` 우선순위/병합
 **결정(해소).** 설정 병합 우선순위는 **Local > Project > User**. 단 permission 평가는
 **deny > ask > allow, first-match이며 deny는 전 scope 최우선**. 상세: `effective-policy.md` (D4).
-- 남은 리스크: managed(사내 정책) settings가 있을 경우 최상위 → 2차 반영 검토.
+- managed **파일** scope는 최상위 읽기 전용 tier로 반영한다. 단 Claude가 server/MDM/registry로
+  주입하는 정책은 현재 파일 탐지 범위 밖이므로 Preview가 실제 런타임과 다를 수 있다.
 
 ## #3. Windows native path ↔ WSL path 매핑
 **결정(부분).** 내부는 POSIX 상대 경로로 정규화, I/O 시 OS 경로 변환(`settings.rs`).
@@ -27,8 +28,9 @@
 - 필요한 것: 배포 채널 결정자 확인.
 
 ## #5. 앱 서명 인증서 필요 여부
-**미결(정책 사안).** Windows SmartScreen 경고 회피를 위해 코드 서명 권장하나,
-사내 CA/인증서 조달은 조직 결정. Iteration 5 전 확정 필요.
+**결정(외부 blocker).** production Windows artifact는 Authenticode 서명과 timestamp 검증을
+필수로 한다. 현재 인증서/managed signing 자격 증명이 없어 workflow는 unsigned prerelease만
+만든다. 조달·CI 보호 조건은 [release-policy.md](release-policy.md)에 정의한다.
 
 ## #6. 다중 에이전트 adapter 인터페이스
 **결정(문서 수준).** `AgentAdapter` 트레잇 초안 정의(policy-model.md 7장).
@@ -42,8 +44,8 @@ Claude Code가 첫 구현체, OpenCode/Codex/Roo는 후속. MVP는 단일 adapte
 ## #8. 앱 메타데이터: settings.json vs 별도 DB
 **결정(해소).** `reason/riskLevel/notes/managedByAg` 등 앱 메타데이터는 **SQLite에만**
 저장하고 settings.json에는 순수 규칙만 기록한다(D3, data-model.md). 알 수 없는 필드는 무손실 보존(D5).
-- 남은 리스크: DB와 파일이 어긋날 때(외부 편집) 메타데이터 매칭 실패 → 규칙 본문 기준 재매칭,
-  없으면 빈 메타로 표시.
+로드 시 `(project_id, scope, path, policy)`로 메타데이터를 다시 붙이며 외부 편집으로 이 키가
+달라진 규칙은 새 규칙으로 취급해 빈 메타데이터를 표시한다.
 
 ---
 
@@ -55,7 +57,7 @@ Claude Code가 첫 구현체, OpenCode/Codex/Roo는 후속. MVP는 단일 adapte
 | #2 우선순위/병합 | ✅ 해소 |
 | #3 WSL 경로 | 🟡 부분(2차 지원) |
 | #4 배포 방식 | ⛔ 미결(정책) |
-| #5 서명 인증서 | ⛔ 미결(정책) |
+| #5 서명 인증서 | 🟡 production 필수 결정, 조달/CI 연동 대기 |
 | #6 adapter | ✅ 문서 수준 결정 |
 | #7 JSON Schema | ✅ 해소(번들) |
 | #8 메타데이터 위치 | ✅ 해소(DB) |

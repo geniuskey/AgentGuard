@@ -8,9 +8,9 @@ agents can access inside a project — without having to understand `settings.js
 ## Core Ideas
 
 - Explicit drive/folder rules — Deny sensitive paths, Allow work folders
-- Local-only processing (no network, no telemetry)
+- Local-first desktop runtime (no telemetry or project upload)
 - Visual project boundary editor (Explorer-style Allow / Ask / Deny)
-- User / Project / Local settings support
+- User / Project / Local settings plus read-only Windows managed-file preview
 - Effective access preview (merged result across scopes)
 - Backup + diff before every save
 
@@ -25,6 +25,11 @@ The v0.1 desktop app is functional and under active development. It uses
 [live documentation site](https://geniuskey.github.io/AgentGuard/) and
 [`docs/tech-stack.md`](docs/tech-stack.md) for details.
 
+This is still a prerelease: Windows packages are not code-signed, automatic
+updates are not enabled, and the clean-VM compatibility matrix has not yet been
+signed off. See [Known limitations](#known-limitations) before using it on
+sensitive settings.
+
 ## Development
 
 Prerequisites: Node 20+, Rust (stable), and — for the desktop shell — the
@@ -35,6 +40,7 @@ npm install              # frontend deps
 
 # Core logic (pure Rust, no WebView needed — runs anywhere)
 cargo test -p agentguard-core
+cargo audit                         # install cargo-audit first
 
 # Frontend (static SPA build + typecheck)
 npm test
@@ -56,8 +62,9 @@ npm run tauri build      # produces the installer
 
 Run **Actions → Build Windows Release → Run workflow** to create or update the
 `v0.1.0` GitHub pre-release. The workflow attaches an NSIS setup EXE, an MSI,
-and an unsigned portable EXE. The portable build still requires the Microsoft
-WebView2 Runtime and may trigger Windows SmartScreen until code signing is set up.
+an unsigned portable EXE, and `SHA256SUMS.txt`. The portable build still requires
+the Microsoft WebView2 Runtime and may trigger Windows SmartScreen until code
+signing is set up.
 
 The release workflow rejects inconsistent versions. `package.json`,
 `package-lock.json`, the Cargo workspace, and `src-tauri/tauri.conf.json` must
@@ -66,6 +73,9 @@ all remain at the current development version, `0.1.0`.
 The live permission probe uses isolated temporary settings and does not modify
 your user or project settings. It verifies a PowerShell wildcard Allow, Deny
 precedence over a CLI Allow, and the `Invoke-WebRequest` web-block rule.
+It invokes your authenticated Claude Code CLI, so it can use the network and
+incur API usage. It is opt-in developer validation, not part of the desktop
+runtime or the normal test suite.
 
 Layout: `crates/agentguard-core` holds all Tauri-independent logic (policy
 conversion, risk scoring, storage) so it stays unit-testable on any host;
@@ -84,10 +94,16 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
 | [docs/risk-scanner.md](docs/risk-scanner.md) | 민감 경로 스캐너, 리스크 점수 함수 |
 | [docs/security.md](docs/security.md) | 보안 원칙, 경고 규칙, Secret 감지 |
 | [docs/ui-spec.md](docs/ui-spec.md) | 화면·상태·컴포넌트 명세 |
-| [docs/tech-stack.md](docs/tech-stack.md) | 기술 스택 트레이드오프 & 권장안 (미확정) |
+| [docs/tech-stack.md](docs/tech-stack.md) | 확정 기술 스택과 Raw JSON 에디터의 실제 구현 상태 |
 | [docs/roadmap.md](docs/roadmap.md) | 수직 슬라이스 우선 마일스톤 + 커버리지 추적표 |
 | [docs/claude-code-settings-plan.md](docs/claude-code-settings-plan.md) | Claude Code 설정 확장 검토 — 갭 분석, Phase 계획, 개선 백로그 |
 | [docs/open-issues.md](docs/open-issues.md) | 오픈 이슈 결정 & 근거 |
+| [docs/diagnostics-and-privacy.md](docs/diagnostics-and-privacy.md) | 로컬 데이터 범위와 안전한 버그 리포트 절차 |
+| [docs/release-policy.md](docs/release-policy.md) | 코드 서명 전제 조건, 수동 업데이트·롤백 정책 |
+| [docs/release-checklist.md](docs/release-checklist.md) | 깨끗한 Windows VM 설치·업그레이드·경로 테스트 |
+
+Top-level [CHANGELOG.md](CHANGELOG.md) tracks release changes and
+[SECURITY.md](SECURITY.md) explains private vulnerability reporting.
 
 ## Key Design Decisions
 
@@ -98,6 +114,24 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
   매칭 규칙이 없는 경로는 Claude Code 기본 동작(실행 시 확인)을 따른다.
 - **앱 메타데이터는 SQLite에만** — `settings.json`에는 순수 규칙만 기록하고 알 수 없는
   필드는 무손실 보존한다.
+
+## Known limitations
+
+- The Raw JSON editor is currently a validated textarea, not Monaco. Syntax
+  highlighting and Monaco worker integration remain deferred.
+- Managed policy files participate in the local effective preview, but policy
+  delivered through server/MDM/registry mechanisms is not discovered.
+- MCP/hooks are visibility-only: project approval keys and current handler
+  types are classified, but Agent Guard does not yet edit these surfaces and
+  the risk labels remain heuristic.
+- WSL paths are out of scope; UNC, OneDrive, Korean, long, and read-only paths
+  remain in the release test matrix until clean-VM evidence is recorded.
+- There is no persistent diagnostic log or in-app “copy diagnostics” command;
+  bug reports currently follow the manual redaction guide.
+- Claude permission rules are not an OS sandbox or firewall. Allowed shell
+  processes may access files or networks outside Read/Edit tool rules.
+- Releases are manually updated and unsigned until the external signing and
+  updater prerequisites in `docs/release-policy.md` are available.
 
 ## License
 

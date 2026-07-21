@@ -15,11 +15,15 @@ pub enum Policy {
     Deny,
 }
 
-/// Which settings scope a rule belongs to. Merge precedence: Local > Project > User
-/// (but a `deny` in any scope wins over an `allow` in another — see [`crate::effective`]).
+/// Which settings scope a rule belongs to. Source precedence is
+/// Managed > Local > Project > User (but a `deny` in any scope wins over an
+/// `allow` in another — see [`crate::effective`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
+    /// Administrator-managed settings. Read-only and higher authority than all
+    /// user-writable scopes.
+    Managed,
     User,
     Project,
     Local,

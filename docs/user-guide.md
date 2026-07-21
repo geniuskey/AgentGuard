@@ -3,18 +3,23 @@
 Agent Guard는 로컬 코딩 에이전트(Claude Code, Codex CLI, OpenCode)가 내 PC와
 프로젝트에서 **무엇에 접근할 수 있는지**를 GUI로 보고 설정하는 데스크톱 앱입니다.
 모든 처리는 로컬에서만 이루어지며, 네트워크 전송·텔레메트리가 없습니다.
+단, 개발자가 명시적으로 실행하는 Claude permission probe는 인증된 Claude CLI/API를 사용하며
+앱 런타임 기능이 아닙니다.
 
 ## 핵심 개념
 
 | 용어 | 의미 |
 |---|---|
 | **Allow / Ask / Deny** | Claude 도구 호출을 각각 사전 승인 / 확인 후 실행 / 차단. Allow만으로 미등록 접근을 차단하지는 않음 |
-| **Scope** | User(`~/.claude/settings.json`) · Project(`.claude/settings.json`) · Local(`.claude/settings.local.json`) |
-| **병합 규칙** | Local > Project > User 순으로 우선하되, **Deny는 어느 Scope에서든 최우선** (deny > ask > allow) |
+| **Scope** | Managed file(읽기 전용) · User(`~/.claude/settings.json`) · Project(`.claude/settings.json`) · Local(`.claude/settings.local.json`) |
+| **병합 규칙** | Managed > Local > Project > User 순으로 우선하되, **Deny는 어느 Scope에서든 최우선** (deny > ask > allow) |
 | **매칭 없는 경로** | 규칙이 없으면 Claude Code 기본 동작(실행 시 확인)을 따릅니다. 민감 경로는 폴더 단위로 **Deny**를 지정해 차단하세요 |
 
 경로 규칙은 저장 시 Claude Code의 도구별 규칙으로 확장됩니다. 예:
 `src/` Allow → `Read/Edit(./src/**)`.
+
+Managed는 Windows `C:\Program Files\ClaudeCode\`의 file-based 정책만 읽습니다. 조직이
+server/MDM/registry로 주입한 정책은 Preview에 보이지 않을 수 있습니다.
 
 > **권한 경계:** `Read/Edit` Deny는 Claude의 내장 파일 도구를 막지만, 이미 허용된
 > Bash·PowerShell 프로세스의 OS 파일 접근까지 차단하는 샌드박스는 아닙니다. 셸 명령
@@ -137,6 +142,8 @@ Hooks와 MCP 서버는 **경로 권한 규칙 밖에서** 동작하므로 읽기
 - **모델·응답** — 기본 모델, 추론 노력 수준, 확장 사고, 응답 언어, 출력 스타일.
 - **동작** — 자동 업데이트(채널), 대화 기록 보관 일수, 컨텍스트 자동 압축, 자동 메모리,
   파일 체크포인트(/rewind).
+  여기서 자동 업데이트는 **Claude Code 자체 설정**이며 Agent Guard 업데이트 기능이 아닙니다.
+  Agent Guard는 현재 [수동 업데이트 정책](release-policy.md)을 사용합니다.
 - **Git·커밋** — 커밋에 Claude 서명(Co-Authored-By) 포함 여부.
 - **권한·보안** — 권한 우회 모드 금지(권장), 프로젝트 MCP 서버 자동 승인(주의),
   추가 접근 허용 폴더(폴더 픽커).

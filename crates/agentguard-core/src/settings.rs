@@ -50,6 +50,92 @@ fn normalized_project_key(path: &str) -> String {
     }
 }
 
+/// Merge an administrator settings fragment into an accumulated JSON value.
+/// Objects merge recursively, arrays concatenate with stable de-duplication,
+/// and a later scalar replaces the earlier value.
+fn merge_managed_value(base: &mut Value, incoming: Value) {
+    match (base, incoming) {
+        (Value::Object(base), Value::Object(incoming)) => {
+            for (key, value) in incoming {
+                match base.get_mut(&key) {
+                    Some(current) => merge_managed_value(current, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (Value::Array(base), Value::Array(incoming)) => {
+            for value in incoming {
+                if !base.contains(&value) {
+                    base.push(value);
+                }
+            }
+        }
+        (base, incoming) => *base = incoming,
+    }
+}
+
+/// Load Claude Code's Windows file-based managed settings tier.
+///
+/// `program_files` is the `ProgramFiles` directory. The base file is merged
+/// first, then `managed-settings.d/*.json` in filename order. Unreadable or
+/// malformed fragments are skipped so a single bad enterprise drop-in does not
+/// prevent the app from displaying the remaining read-only policy. Registry and
+/// server-managed tiers intentionally are not inferred by this offline loader.
+pub fn load_file_managed_settings(program_files: &Path) -> Option<LoadedSettings> {
+    let root = program_files.join("ClaudeCode");
+    let base_file = root.join("managed-settings.json");
+    let fragments_dir = root.join("managed-settings.d");
+
+    let mut candidates = vec![base_file];
+    let mut fragments: Vec<PathBuf> = std::fs::read_dir(fragments_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        })
+        .collect();
+    fragments.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    candidates.extend(fragments);
+
+    let mut merged = Value::Object(Map::new());
+    let mut loaded_any = false;
+    for path in candidates {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        if !value.is_object() {
+            continue;
+        }
+        merge_managed_value(&mut merged, value);
+        loaded_any = true;
+    }
+    if !loaded_any {
+        return None;
+    }
+
+    let perms_obj = merged.get("permissions").and_then(Value::as_object);
+    Some(LoadedSettings {
+        scope: Scope::Managed,
+        permissions: Permissions {
+            allow: string_array(perms_obj.and_then(|p| p.get("allow"))),
+            ask: string_array(perms_obj.and_then(|p| p.get("ask"))),
+            deny: string_array(perms_obj.and_then(|p| p.get("deny"))),
+        },
+        raw: merged,
+    })
+}
+
 fn project_keys_equal(left: &str, right: &str) -> bool {
     let left = normalized_project_key(left);
     let right = normalized_project_key(right);
@@ -255,6 +341,67 @@ mod tests {
         let untrusted = project_trust_from_value(&state, Path::new("/work/app"));
         assert!(untrusted.entry_found);
         assert!(!untrusted.accepted);
+    }
+
+    #[test]
+    fn managed_file_tier_merges_drop_ins_in_sorted_order() {
+        let root = std::env::temp_dir().join(format!(
+            "agentguard-managed-settings-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let claude = root.join("ClaudeCode");
+        let drop_ins = claude.join("managed-settings.d");
+        std::fs::create_dir_all(&drop_ins).unwrap();
+        std::fs::write(
+            claude.join("managed-settings.json"),
+            r#"{
+                "model": "base",
+                "permissions": {
+                    "allow": ["Read(./src/**)"],
+                    "deny": ["Read(./.env)"]
+                },
+                "env": { "A": "base" }
+            }"#,
+        )
+        .unwrap();
+        // Filename order matters: 20 overrides the scalar written by 10.
+        std::fs::write(
+            drop_ins.join("20-team.json"),
+            r#"{
+                "model": "team",
+                "permissions": { "deny": ["Read(./secrets/**)"] },
+                "env": { "A": "twenty" }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            drop_ins.join("10-org.json"),
+            r#"{
+                "model": "org",
+                "permissions": {
+                    "allow": ["Read(./src/**)", "Edit(./src/**)"]
+                },
+                "env": { "A": "ten", "B": "kept" }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(drop_ins.join("15-invalid.json"), "not json").unwrap();
+
+        let loaded = load_file_managed_settings(&root).unwrap();
+        assert_eq!(loaded.scope, Scope::Managed);
+        assert_eq!(
+            loaded.permissions.allow,
+            vec!["Read(./src/**)", "Edit(./src/**)"]
+        );
+        assert_eq!(
+            loaded.permissions.deny,
+            vec!["Read(./.env)", "Read(./secrets/**)"]
+        );
+        assert_eq!(loaded.raw["model"], "team");
+        assert_eq!(loaded.raw["env"]["A"], "twenty");
+        assert_eq!(loaded.raw["env"]["B"], "kept");
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

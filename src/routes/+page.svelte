@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import {
     appInfo,
+    diagnosticReport,
     inTauri,
     listAgentGlobals,
     listRecentProjects,
@@ -22,6 +23,7 @@
   let agents = $state<AgentGlobal[]>([]);
   let error = $state<string | null>(null);
   let busy = $state(false);
+  let diagnosticStatus = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -56,6 +58,16 @@
       return;
     }
     await open(await pickFolder());
+  }
+
+  async function copyDiagnostics() {
+    try {
+      const report = await diagnosticReport();
+      await navigator.clipboard.writeText(report);
+      diagnosticStatus = '비밀값을 제외한 진단 정보를 클립보드에 복사했습니다.';
+    } catch (e) {
+      error = String(e);
+    }
   }
 </script>
 
@@ -93,6 +105,7 @@
       </p>
     </div>
     <div class="hero-actions">
+      <button class="theme-toggle" onclick={copyDiagnostics} title="진단 정보 복사">진단 복사</button>
       <HelpButton section="home" />
       <button
         class="theme-toggle"
@@ -129,6 +142,7 @@
   {#if error}
     <p class="error" role="alert">{error}</p>
   {/if}
+  {#if diagnosticStatus}<p class="diagnostic-status" role="status">{diagnosticStatus}</p>{/if}
 
   <section class="actions">
     <button class="primary" onclick={onOpenClick} disabled={busy}>
@@ -489,6 +503,11 @@
     border-radius: var(--r-sm);
     padding: 0.5rem 0.8rem;
     font-size: 0.85rem;
+  }
+  .diagnostic-status {
+    color: var(--allow);
+    font-size: 0.78rem;
+    margin: 0.25rem 0 0.8rem;
   }
   footer {
     margin-top: 2.5rem;

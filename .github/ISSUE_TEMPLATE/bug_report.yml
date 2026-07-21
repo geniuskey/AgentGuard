@@ -1,0 +1,88 @@
+name: 버그 리포트
+description: 재현 가능한 오류나 예상과 다른 동작을 알려 주세요.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        보안 취약점은 공개 Issue 대신 **Security 탭의 private vulnerability report**를 사용해 주세요.
+        경로, 사용자 이름, 설정 JSON, 화면 캡처에는 비밀 값이 포함될 수 있으니 먼저 삭제하거나 대체하세요.
+
+  - type: input
+    id: version
+    attributes:
+      label: Agent Guard 버전
+      description: 앱 또는 릴리스 파일에 표시된 버전입니다.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: distribution
+    attributes:
+      label: 설치 형태
+      options:
+        - NSIS setup EXE
+        - MSI
+        - Portable EXE
+        - npm run tauri dev
+        - 기타/모름
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 환경
+      description: Windows 버전, 빌드, x64/ARM64와 WebView2 버전을 적어 주세요.
+      placeholder: Windows 11 24H2 x64, WebView2 1xx.x
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 순서
+      description: 실제 프로젝트명과 비밀 값 대신 안전한 임시 프로젝트를 사용해 주세요.
+      placeholder: |
+        1. 빈 임시 폴더를 연다.
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 결과
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 결과
+    validations:
+      required: true
+
+  - type: textarea
+    id: path_conditions
+    attributes:
+      label: 경로·파일 조건
+      description: 해당하면 UNC, OneDrive, 한글, 긴 경로, 읽기 전용 여부만 적고 실제 민감 경로는 익명화하세요.
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 정제한 진단 정보
+      description: docs/diagnostics-and-privacy.md의 체크리스트대로 비밀 값과 개인 경로를 제거한 내용만 첨부하세요.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 개인정보 확인
+      options:
+        - label: 첨부물에서 토큰, 키, 환경변수 값, 사용자 이름, 사내 서버명과 프로젝트 내용을 제거했습니다.
+          required: true

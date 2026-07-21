@@ -12,7 +12,7 @@
   const asked = $derived(app.effective.filter((e) => e.effective === 'ask'));
   const conflicts = $derived(app.effective.filter((e) => e.conflict));
   const byScope = $derived(
-    (['user', 'project', 'local'] as const).map((s) => ({
+    (['managed', 'user', 'project', 'local'] as const).map((s) => ({
       scope: s,
       rules: app.scoped[s].rules
     }))
@@ -85,6 +85,12 @@
         <p class="muted">충돌 없음</p>
       {/each}
     {:else if tab === 'byscope'}
+      {#if app.scoped.managed.enforceManagedOnly}
+        <p class="managed-only">
+          관리자가 <code>allowManagedPermissionRulesOnly</code>를 활성화했습니다. 아래 User/Project/Local
+          규칙은 파일에 남아 있지만 유효 정책 계산에서는 제외됩니다.
+        </p>
+      {/if}
       {#each byScope as g (g.scope)}
         <div class="scope-group">
           <b>{g.scope}</b>
@@ -204,6 +210,15 @@
   .muted {
     color: var(--text-3);
     font-size: 0.85rem;
+  }
+  .managed-only {
+    margin: 0 0 0.75rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--bg-1);
+    font-size: 0.85rem;
+    line-height: 1.45;
   }
   .pletter {
     display: inline-grid;

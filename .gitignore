@@ -21,3 +21,6 @@ Thumbs.db
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Agent Guard: per-machine local settings (do not commit)
+.claude/settings.local.json

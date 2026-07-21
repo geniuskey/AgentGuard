@@ -14,6 +14,8 @@
   } from '$lib/ipc';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
   import AgentSettingsForm from '$lib/components/AgentSettingsForm.svelte';
+  import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
+  import { modalFocus } from '$lib/modal';
 
   let { agent }: { agent: AgentGlobal } = $props();
 
@@ -48,7 +50,7 @@
     error = null;
     status = null;
     try {
-      onDisk = await readAgentConfig(agent.path);
+      onDisk = await readAgentConfig(agent.id);
       text = onDisk;
     } catch (e) {
       error = String(e);
@@ -109,9 +111,7 @@
     saving = true;
     try {
       const res = await saveAgentConfig({
-        path: agent.path,
         text,
-        format: agent.format,
         agentId: agent.id
       });
       onDisk = text;
@@ -126,6 +126,8 @@
 
   const dirty = $derived(text !== onDisk);
 </script>
+
+<UnsavedMarker id={`agent-config-${agent.id}`} when={dirty} />
 
 <div class="panel">
   <div class="bar">
@@ -179,13 +181,20 @@
 </div>
 
 {#if diff}
-  <div class="modal-bg" role="presentation" onclick={() => (diff = null)}>
-    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-      <h3>저장 전 변경 확인 — {agent.name}</h3>
+  <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) diff = null; }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agent-save-title"
+      tabindex="-1"
+      use:modalFocus={() => (diff = null)}
+    >
+      <h3 id="agent-save-title">저장 전 변경 확인 — {agent.name}</h3>
       <p class="fp">{diff.path}</p>
       {#if diff.changed}<DiffViewer {diff} />{:else}<p class="nochg">변경 사항이 없습니다.</p>{/if}
       <div class="modal-actions">
-        <button onclick={() => (diff = null)}>취소</button>
+        <button data-modal-initial onclick={() => (diff = null)}>취소</button>
         <button class="primary" onclick={confirmSave} disabled={saving || !diff.changed}>
           {saving ? '저장 중…' : '백업 후 저장'}
         </button>
@@ -206,6 +215,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-bottom: 0.5rem;
   }
@@ -232,8 +242,12 @@
   .tools {
     display: flex;
     gap: 0.35rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
   .tools button {
+    flex-shrink: 0;
     padding: 0.3rem 0.7rem;
     background: var(--bg-2);
     border: 1px solid var(--border-strong);
