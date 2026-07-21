@@ -195,7 +195,7 @@ mod tests {
         fs::write(root.join("README.md"), "x").unwrap();
 
         let entries = list_dir(&root, "").unwrap();
-        assert_eq!(entries[0].is_dir, true); // dirs first
+        assert!(entries[0].is_dir); // dirs first
         let nm = entries.iter().find(|e| e.name == "node_modules").unwrap();
         assert!(nm.excluded);
         assert!(entries.iter().any(|e| e.name == "README.md" && !e.is_dir));

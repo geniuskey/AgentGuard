@@ -36,10 +36,17 @@ cargo test -p agentguard-core
 npm run build
 npm run check
 
+# Optional live Claude Code permission probes (authenticated CLI + API usage)
+npm run test:claude-permissions
+
 # Full desktop app (needs Tauri prerequisites; Windows is the primary target)
 npm run tauri dev        # launches the window
 npm run tauri build      # produces the installer
 ```
+
+The live permission probe uses isolated temporary settings and does not modify
+your user or project settings. It verifies a PowerShell wildcard Allow, Deny
+precedence over a CLI Allow, and the `Invoke-WebRequest` web-block rule.
 
 Layout: `crates/agentguard-core` holds all Tauri-independent logic (policy
 conversion, risk scoring, storage) so it stays unit-testable on any host;

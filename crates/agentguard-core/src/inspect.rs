@@ -37,12 +37,27 @@ pub struct McpServer {
 
 /// Name/command fragments of stdio MCP servers known to reach the internet.
 const WEB_HINT_FRAGMENTS: &[&str] = &[
-    "context7", "fetch", "search", "brave", "tavily", "exa", "firecrawl",
-    "perplexity", "browser", "puppeteer", "playwright", "web", "http",
+    "context7",
+    "fetch",
+    "search",
+    "brave",
+    "tavily",
+    "exa",
+    "firecrawl",
+    "perplexity",
+    "browser",
+    "puppeteer",
+    "playwright",
+    "web",
+    "http",
 ];
 
 fn stdio_uses_web(name: &str, target: &str) -> bool {
-    let hay = format!("{} {}", name.to_ascii_lowercase(), target.to_ascii_lowercase());
+    let hay = format!(
+        "{} {}",
+        name.to_ascii_lowercase(),
+        target.to_ascii_lowercase()
+    );
     WEB_HINT_FRAGMENTS.iter().any(|h| hay.contains(h))
 }
 
@@ -90,33 +105,34 @@ pub fn mcp_servers_from_value(source: &str, servers: &Value) -> Vec<McpServer> {
         let Some(cfg) = cfg.as_object() else {
             continue;
         };
-        let (transport, target, uses_web) = if let Some(url) = cfg.get("url").and_then(|u| u.as_str()) {
-            let t = cfg
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("http")
-                .to_string();
-            (t, url.to_string(), true)
-        } else if let Some(cmd) = cfg.get("command").and_then(|c| c.as_str()) {
-            let args: Vec<String> = cfg
-                .get("args")
-                .and_then(|a| a.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let line = if args.is_empty() {
-                cmd.to_string()
+        let (transport, target, uses_web) =
+            if let Some(url) = cfg.get("url").and_then(|u| u.as_str()) {
+                let t = cfg
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("http")
+                    .to_string();
+                (t, url.to_string(), true)
+            } else if let Some(cmd) = cfg.get("command").and_then(|c| c.as_str()) {
+                let args: Vec<String> = cfg
+                    .get("args")
+                    .and_then(|a| a.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let line = if args.is_empty() {
+                    cmd.to_string()
+                } else {
+                    format!("{cmd} {}", args.join(" "))
+                };
+                let web = stdio_uses_web(name, &line);
+                ("stdio".to_string(), line, web)
             } else {
-                format!("{cmd} {}", args.join(" "))
+                continue; // neither url nor command — not a server entry
             };
-            let web = stdio_uses_web(name, &line);
-            ("stdio".to_string(), line, web)
-        } else {
-            continue; // neither url nor command — not a server entry
-        };
         out.push(McpServer {
             name: name.clone(),
             source: source.to_string(),

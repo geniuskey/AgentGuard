@@ -489,7 +489,23 @@ export async function lintClaudeSettings(text: string): Promise<LintItem[]> {
 
 /** The web/network deny specifiers a "block web access" toggle applies (Claude Code). */
 export async function webBlockSpecifiers(): Promise<string[]> {
-  if (!inTauri()) return ['WebSearch', 'WebFetch', 'Bash(curl:*)', 'Bash(wget:*)'];
+  if (!inTauri()) {
+    return [
+      'WebSearch',
+      'WebFetch',
+      'Bash(curl:*)',
+      'Bash(wget:*)',
+      'PowerShell(Invoke-WebRequest *)',
+      'PowerShell(Invoke-RestMethod *)',
+      'PowerShell(Start-BitsTransfer *)',
+      'PowerShell(iwr *)',
+      'PowerShell(irm *)',
+      'PowerShell(curl *)',
+      'PowerShell(wget *)',
+      'PowerShell(curl.exe *)',
+      'PowerShell(wget.exe *)'
+    ];
+  }
   return invoke<string[]>('web_block_specifiers');
 }
 

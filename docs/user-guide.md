@@ -125,7 +125,10 @@ Hooks와 MCP 서버는 **경로 권한 규칙 밖에서** 동작하므로 읽기
   (`C:\Windows` → `//c/Windows/**`, 홈 아래는 `~/…/**`).
 - **보안 베이스라인** — SSH/클라우드 자격증명, 인증서·키, `.env`, Windows 시스템 경로를
   일괄 Deny.
-- **웹·네트워크 차단** — `WebSearch`/`WebFetch`/`curl`/`wget` 차단 (프롬프트·데이터 유출 방지).
+- **웹 접근 제한** — `WebSearch`/`WebFetch`, Bash `curl`/`wget`, PowerShell
+  `Invoke-WebRequest`/`Invoke-RestMethod`/BITS와 그 별칭, `curl.exe`/`wget.exe`를 차단.
+  일부만 설정된 기존 구성은 `PARTIAL`로 표시됩니다. 임의 인터프리터의 소켓 접근까지
+  막는 OS 방화벽은 아니므로 셸 Allow도 함께 최소화해야 합니다.
 
 ### 일반 설정 탭
 

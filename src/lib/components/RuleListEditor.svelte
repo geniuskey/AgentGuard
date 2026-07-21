@@ -52,7 +52,13 @@
 
   const bucket = $derived(app.scoped[scope]);
   const rules = $derived(bucket.rules);
-  const webBlocked = $derived((bucket.extraDeny ?? []).length > 0);
+  const configuredWebRules = $derived(
+    webSet.filter((rule) => (bucket.extraDeny ?? []).includes(rule))
+  );
+  const webBlocked = $derived(
+    webSet.length > 0 && configuredWebRules.length === webSet.length
+  );
+  const webPartial = $derived(!webBlocked && configuredWebRules.length > 0);
 
   const counts = $derived({
     allow: rules.filter((r) => r.policy === 'allow').length,
@@ -220,13 +226,18 @@
     status = `${policy === 'allow' ? '작업' : '민감'} 폴더 ${policy === 'allow' ? 'Allow' : 'Deny'} 추가: ${pat}`;
   }
 
-  // Toggle the web/network capability block (WebSearch/WebFetch/curl/wget deny).
+  // Toggle the web-tool/common-client block. This is not an OS-level firewall.
   function toggleWebBlock() {
     const wasBlocked = webBlocked;
-    setExtraDeny(scope, wasBlocked ? [] : webSet);
+    const current = bucket.extraDeny ?? [];
+    const webRules = new Set(webSet);
+    const next = wasBlocked
+      ? current.filter((rule) => !webRules.has(rule))
+      : [...current, ...webSet.filter((rule) => !current.includes(rule))];
+    setExtraDeny(scope, next);
     status = wasBlocked
-      ? '웹/네트워크 차단을 해제했습니다.'
-      : '웹 검색·외부 네트워크 차단을 추가했습니다 (저장 시 적용).';
+      ? '웹 접근 제한을 해제했습니다.'
+      : '웹 도구와 대표 HTTP 클라이언트 차단을 추가했습니다 (저장 시 적용).';
   }
 
   // Apply the security baseline Deny rules (SSH/cloud creds, keys, .env, …).
@@ -328,10 +339,10 @@
       class="ov ov-toggle"
       class:on={webBlocked}
       onclick={toggleWebBlock}
-      title="WebSearch·WebFetch·curl·wget 차단 — 프롬프트/데이터 외부 유출 방지"
+      title="WebSearch·WebFetch와 Bash/PowerShell의 대표 HTTP 클라이언트 차단 — OS 방화벽은 아님"
     >
       <span class="ov-dot" class:d-guard={webBlocked} aria-hidden="true"></span>
-      웹·네트워크 차단 <b>{webBlocked ? 'ON' : 'OFF'}</b>
+      웹 접근 제한 <b>{webBlocked ? 'ON' : webPartial ? 'PARTIAL' : 'OFF'}</b>
     </button>
   </div>
 

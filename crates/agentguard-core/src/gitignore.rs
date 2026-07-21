@@ -98,10 +98,10 @@ pub fn note_allowed_ignored_path(project_root: &Path, rel_path: &str) -> crate::
         let mut insert_at = None;
         let mut section_end = lines.len();
         // marker_idx + 1 is the section's own `## ` heading — start after it.
-        for i in (marker_idx + 2)..lines.len() {
-            if lines[i].trim_start().starts_with("- `") {
+        for (i, line) in lines.iter().enumerate().skip(marker_idx + 2) {
+            if line.trim_start().starts_with("- `") {
                 insert_at = Some(i + 1);
-            } else if lines[i].starts_with("## ") {
+            } else if line.starts_with("## ") {
                 section_end = i;
                 break;
             }
