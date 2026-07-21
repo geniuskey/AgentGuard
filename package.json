@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test:claude-permissions": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/test-claude-permissions.ps1",
     "tauri": "tauri"
   },
   "devDependencies": {

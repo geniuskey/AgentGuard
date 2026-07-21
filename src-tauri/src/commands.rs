@@ -114,11 +114,26 @@ pub fn list_dir(project_root: String, rel_dir: String) -> Result<Vec<DirEntry>, 
     fs_scan::list_dir(Path::new(&project_root), &rel_dir).map_err(|e| e.to_string())
 }
 
-/// Non-path tool denies toggled as a group to block the agent's web/network access,
-/// so prompts and file contents can't leave the machine (intranet no-exfil). These are
-/// tool-level rules, not path rules, so they ride alongside the neutral model as
-/// `extra_deny` and are preserved as unmanaged rules in `settings.json`.
-const WEB_DENY: &[&str] = &["WebSearch", "WebFetch", "Bash(curl:*)", "Bash(wget:*)"];
+/// Non-path tool denies toggled as a group to block Claude's web tools and common
+/// command-line HTTP clients. This is defense in depth, not an OS firewall: an
+/// allowed arbitrary interpreter can still open sockets.
+const WEB_DENY: &[&str] = &[
+    "WebSearch",
+    "WebFetch",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    // Cover cmdlet names, short aliases, and native executable names because alias
+    // resolution differs between Windows PowerShell and PowerShell 7.
+    "PowerShell(Invoke-WebRequest *)",
+    "PowerShell(Invoke-RestMethod *)",
+    "PowerShell(Start-BitsTransfer *)",
+    "PowerShell(iwr *)",
+    "PowerShell(irm *)",
+    "PowerShell(curl *)",
+    "PowerShell(wget *)",
+    "PowerShell(curl.exe *)",
+    "PowerShell(wget.exe *)",
+];
 
 /// The web/network deny specifiers (single source of truth for the UI toggle).
 #[tauri::command]
@@ -188,6 +203,31 @@ pub fn load_settings(project_root: String) -> Result<ScopedRulesDto, String> {
     })
 }
 
+/// Read Claude Code's trust bit plus the number of shared-project allow rules.
+/// Never returns any other content from the potentially sensitive ~/.claude.json.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeProjectTrustView {
+    pub entry_found: bool,
+    pub accepted: bool,
+    pub shared_allow_rules: usize,
+}
+
+#[tauri::command]
+pub fn claude_project_trust_status(project_root: String) -> Result<ClaudeProjectTrustView, String> {
+    let root = PathBuf::from(&project_root);
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let trust = settings::project_trust_status(&root, &home).map_err(|e| e.to_string())?;
+    let project_file = settings::scope_paths(&root, &home).project;
+    let text = std::fs::read_to_string(project_file).unwrap_or_default();
+    let loaded = settings::parse(Scope::Project, &text).map_err(|e| e.to_string())?;
+    Ok(ClaudeProjectTrustView {
+        entry_found: trust.entry_found,
+        accepted: trust.accepted,
+        shared_allow_rules: loaded.permissions.allow.len(),
+    })
+}
+
 /// Compute the effective (merged) policy for every distinct rule path.
 #[tauri::command]
 pub fn compute_effective(scoped: ScopedRulesDto) -> Result<Vec<EffectivePolicy>, String> {
@@ -236,8 +276,7 @@ fn render_scope(
             unmanaged.deny.push(d.clone());
         }
     }
-    let after =
-        settings::render(&loaded.raw, &sr.rules, &unmanaged).map_err(|e| e.to_string())?;
+    let after = settings::render(&loaded.raw, &sr.rules, &unmanaged).map_err(|e| e.to_string())?;
     Ok((file, before, after))
 }
 
@@ -604,7 +643,17 @@ pub struct AgentGlobal {
 
 /// Static registry of known agents and their candidate global config paths.
 /// `candidates` are home-relative; the first that exists wins, else the first is used.
-fn agent_specs() -> Vec<(&'static str, &'static str, &'static str, Vec<&'static str>, &'static str, bool, &'static str)> {
+type AgentSpec = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Vec<&'static str>,
+    &'static str,
+    bool,
+    &'static str,
+);
+
+fn agent_specs() -> Vec<AgentSpec> {
     vec![
         (
             "claude-code",
@@ -628,7 +677,10 @@ fn agent_specs() -> Vec<(&'static str, &'static str, &'static str, Vec<&'static 
             "opencode",
             "OpenCode",
             "OpenCode — 모델/공유/permission (JSON)",
-            vec![".config/opencode/opencode.json", ".config/opencode/opencode.jsonc"],
+            vec![
+                ".config/opencode/opencode.json",
+                ".config/opencode/opencode.jsonc",
+            ],
             "json",
             true,
             "/agent?id=opencode",
@@ -758,7 +810,9 @@ pub struct SystemEntry {
 /// trailing `/**` (which also yields the correct exact-match pattern for files).
 fn pattern_base(path: &Path, home: &Path) -> String {
     let pat = policy::global_folder_pattern(&path.to_string_lossy(), home);
-    pat.trim_end_matches("/**").trim_end_matches('/').to_string()
+    pat.trim_end_matches("/**")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// Roots for the system explorer: the home folder first, then every mounted drive
@@ -960,7 +1014,8 @@ pub fn security_baseline(agent_id: String, current_text: String) -> Result<Strin
             } else {
                 toml::from_str(&current_text).map_err(|e| e.to_string())?
             };
-            let patch: toml::Value = toml::from_str(CODEX_BASELINE_TOML).map_err(|e| e.to_string())?;
+            let patch: toml::Value =
+                toml::from_str(CODEX_BASELINE_TOML).map_err(|e| e.to_string())?;
             merge_toml(&mut base, &patch);
             toml::to_string(&base).map_err(|e| e.to_string())
         }
@@ -997,7 +1052,9 @@ fn toml_to_json(v: &toml::Value) -> serde_json::Value {
         toml::Value::Datetime(d) => serde_json::Value::String(d.to_string()),
         toml::Value::Array(a) => serde_json::Value::Array(a.iter().map(toml_to_json).collect()),
         toml::Value::Table(t) => serde_json::Value::Object(
-            t.iter().map(|(k, v)| (k.clone(), toml_to_json(v))).collect(),
+            t.iter()
+                .map(|(k, v)| (k.clone(), toml_to_json(v)))
+                .collect(),
         ),
     }
 }
@@ -1022,7 +1079,11 @@ fn json_to_toml(v: &serde_json::Value) -> Result<toml::Value, String> {
     })
 }
 
-fn json_set(obj: &mut serde_json::Map<String, serde_json::Value>, segs: &[&str], value: &serde_json::Value) {
+fn json_set(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    segs: &[&str],
+    value: &serde_json::Value,
+) {
     if segs.len() == 1 {
         obj.insert(segs[0].to_string(), value.clone());
         return;
@@ -1033,7 +1094,11 @@ fn json_set(obj: &mut serde_json::Map<String, serde_json::Value>, segs: &[&str],
     if !child.is_object() {
         *child = serde_json::json!({});
     }
-    json_set(child.as_object_mut().expect("object ensured"), &segs[1..], value);
+    json_set(
+        child.as_object_mut().expect("object ensured"),
+        &segs[1..],
+        value,
+    );
 }
 
 /// Remove `segs`, pruning parent objects that become empty.
@@ -1063,7 +1128,11 @@ fn toml_set(table: &mut toml::value::Table, segs: &[&str], value: &toml::Value) 
     if !child.is_table() {
         *child = toml::Value::Table(Default::default());
     }
-    toml_set(child.as_table_mut().expect("table ensured"), &segs[1..], value);
+    toml_set(
+        child.as_table_mut().expect("table ensured"),
+        &segs[1..],
+        value,
+    );
 }
 
 fn toml_remove(table: &mut toml::value::Table, segs: &[&str]) {
@@ -1191,7 +1260,10 @@ fn opencode_perm(v: Option<&serde_json::Value>, default: &str) -> (String, Optio
                 .and_then(|x| x.as_str())
                 .unwrap_or(default)
                 .to_string();
-            (base, m.len().saturating_sub(usize::from(m.contains_key("*"))))
+            (
+                base,
+                m.len().saturating_sub(usize::from(m.contains_key("*"))),
+            )
         }
         _ => (format!("{default} (기본값)"), 0),
     };
@@ -1226,7 +1298,11 @@ fn opencode_security_status(text: &str) -> Result<Vec<AgentSecItem>, String> {
         ("프로젝트 밖 접근", "external_directory"),
     ] {
         // external_directory defaults to ask; the rest default to allow (docs).
-        let default = if key == "external_directory" { "ask" } else { "allow" };
+        let default = if key == "external_directory" {
+            "ask"
+        } else {
+            "allow"
+        };
         let (value, ok) = opencode_perm(p(key), default);
         items.push(sec(label, value, ok));
     }
@@ -1341,15 +1417,16 @@ pub fn agent_security_status(agent_id: String, text: String) -> Result<Vec<Agent
 // --- Policy simulator ----------------------------------------------------------
 
 /// Simulate a query against the policy. `kind: "path"` evaluates the current
-/// (possibly unsaved) editor rules; `kind: "command"` evaluates the raw Bash
-/// specifiers of the *saved* settings files, since Bash rules live outside the
-/// neutral path model.
+/// (possibly unsaved) editor rules; `kind: "command"` evaluates the selected
+/// shell tool's raw specifiers from the *saved* settings files, since shell
+/// rules live outside the neutral path model.
 #[tauri::command]
 pub fn simulate_access(
     project_root: String,
     scoped: ScopedRulesDto,
     query: String,
     kind: String,
+    shell_tool: Option<String>,
 ) -> Result<SimResult, String> {
     match kind.as_str() {
         "path" => Ok(simulate::simulate_path(&scoped.to_core(), &query)),
@@ -1362,7 +1439,12 @@ pub fn simulate_access(
                 let loaded = settings::parse(scope, &text).map_err(|e| e.to_string())?;
                 perms.push((scope, loaded.permissions));
             }
-            Ok(simulate::simulate_command(&perms, &query))
+            let tool = match shell_tool.as_deref().unwrap_or("PowerShell") {
+                "Bash" => simulate::ShellTool::Bash,
+                "PowerShell" => simulate::ShellTool::PowerShell,
+                other => return Err(format!("unknown shell tool: {other}")),
+            };
+            Ok(simulate::simulate_command(&perms, &query, tool))
         }
         other => Err(format!("unknown simulate kind: {other}")),
     }
@@ -1398,7 +1480,10 @@ fn agent_surface(root: &Path, home: &Path) -> AgentSurface {
         mcp_servers.extend(inspect::parse_mcp_json("project (.mcp.json)", &text));
     }
     if let Ok(text) = std::fs::read_to_string(home.join(".claude.json")) {
-        mcp_servers.extend(inspect::parse_claude_json_mcp("user (~/.claude.json)", &text));
+        mcp_servers.extend(inspect::parse_claude_json_mcp(
+            "user (~/.claude.json)",
+            &text,
+        ));
     }
 
     AgentSurface { hooks, mcp_servers }
@@ -1444,8 +1529,8 @@ pub fn watch_project(
         v
     };
 
-    let mut watcher = notify::recommended_watcher(
-        move |res: Result<notify::Event, notify::Error>| {
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             use notify::EventKind;
             let Ok(ev) = res else { return };
             if !matches!(
@@ -1464,9 +1549,8 @@ pub fn watch_project(
                     );
                 }
             }
-        },
-    )
-    .map_err(|e| e.to_string())?;
+        })
+        .map_err(|e| e.to_string())?;
 
     for d in dirs {
         if d.is_dir() {
@@ -1486,4 +1570,42 @@ pub fn watch_project(
 pub fn unwatch_project(state: State<WatchState>) -> Result<(), String> {
     *state.0.lock().map_err(|e| e.to_string())? = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_block_covers_windows_and_bash_http_clients() {
+        let unique: std::collections::HashSet<_> = WEB_DENY.iter().collect();
+        assert_eq!(unique.len(), WEB_DENY.len(), "duplicate web deny rule");
+
+        let perms = vec![(
+            Scope::User,
+            Permissions {
+                deny: WEB_DENY.iter().map(|rule| rule.to_string()).collect(),
+                ..Default::default()
+            },
+        )];
+        for command in ["curl https://example.com", "wget https://example.com"] {
+            let result = simulate::simulate_command(&perms, command, simulate::ShellTool::Bash);
+            assert_eq!(result.decision, Policy::Deny, "{command}");
+        }
+        for command in [
+            "Invoke-WebRequest https://example.com",
+            "Invoke-RestMethod https://example.com",
+            "Start-BitsTransfer https://example.com C:/Temp/probe",
+            "iwr https://example.com",
+            "irm https://example.com",
+            "curl https://example.com",
+            "wget https://example.com",
+            "curl.exe https://example.com",
+            "wget.exe https://example.com",
+        ] {
+            let result =
+                simulate::simulate_command(&perms, command, simulate::ShellTool::PowerShell);
+            assert_eq!(result.decision, Policy::Deny, "{command}");
+        }
+    }
 }

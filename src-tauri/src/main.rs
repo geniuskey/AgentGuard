@@ -39,6 +39,7 @@ fn main() {
             commands::open_project,
             commands::list_dir,
             commands::load_settings,
+            commands::claude_project_trust_status,
             commands::compute_effective,
             commands::effective_for,
             commands::to_settings_preview,

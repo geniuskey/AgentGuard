@@ -101,6 +101,13 @@
     <button class="clear" onclick={clear} disabled={!current}>Clear rule</button>
   </div>
 
+  <div class="boundary-note">
+    <b>권한 경계</b>
+    Allow는 일치한 호출을 미리 승인할 뿐, 미등록 접근을 차단하는 화이트리스트가 아닙니다.
+    Read/Edit Deny는 Claude의 내장 파일 도구에는 적용되지만, 허용된 Bash·PowerShell 프로세스의
+    OS 파일 접근까지 차단하지는 않습니다.
+  </div>
+
   {#if ignored}
     <div class="ginote">
       <b>.gitignore에 포함된 경로입니다.</b> 차단된 것은 아닙니다 —
@@ -284,6 +291,21 @@
     color: var(--text-3);
     font-size: 0.8rem;
     margin-top: 0.8rem;
+  }
+  .boundary-note {
+    margin-top: 0.9rem;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 0.55rem 0.7rem;
+    color: var(--text-3);
+    font-size: 0.72rem;
+    line-height: 1.5;
+  }
+  .boundary-note b {
+    display: block;
+    color: var(--text-2);
+    margin-bottom: 0.15rem;
   }
   .ginote {
     margin-top: 0.9rem;

@@ -64,7 +64,10 @@ const KNOWN_KEYS: &[(&str, Expect)] = &[
     ("$schema", Expect::Str),
     ("model", Expect::Str),
     ("availableModels", Expect::StrArray),
-    ("effortLevel", Expect::Enum(&["low", "medium", "high", "xhigh"])),
+    (
+        "effortLevel",
+        Expect::Enum(&["low", "medium", "high", "xhigh"]),
+    ),
     ("alwaysThinkingEnabled", Expect::Bool),
     ("outputStyle", Expect::Str),
     ("language", Expect::Str),
@@ -130,7 +133,10 @@ fn is_string_array(v: &Value) -> bool {
 fn check_known(key: &str, expect: &Expect, v: &Value, out: &mut Vec<LintItem>) {
     match expect {
         Expect::Bool if !v.is_boolean() => {
-            out.push(warn(key, format!("true/false여야 합니다 (현재: {})", type_name(v))));
+            out.push(warn(
+                key,
+                format!("true/false여야 합니다 (현재: {})", type_name(v)),
+            ));
         }
         Expect::Int(min) => match v.as_i64() {
             Some(n) => {
@@ -140,16 +146,25 @@ fn check_known(key: &str, expect: &Expect, v: &Value, out: &mut Vec<LintItem>) {
                     }
                 }
             }
-            None => out.push(warn(key, format!("정수여야 합니다 (현재: {})", type_name(v)))),
+            None => out.push(warn(
+                key,
+                format!("정수여야 합니다 (현재: {})", type_name(v)),
+            )),
         },
         Expect::Str if !v.is_string() => {
-            out.push(warn(key, format!("문자열이어야 합니다 (현재: {})", type_name(v))));
+            out.push(warn(
+                key,
+                format!("문자열이어야 합니다 (현재: {})", type_name(v)),
+            ));
         }
         Expect::StrArray if !is_string_array(v) => {
             out.push(warn(key, "문자열 배열이어야 합니다".to_string()));
         }
         Expect::Object if !v.is_object() => {
-            out.push(warn(key, format!("객체여야 합니다 (현재: {})", type_name(v))));
+            out.push(warn(
+                key,
+                format!("객체여야 합니다 (현재: {})", type_name(v)),
+            ));
         }
         Expect::Enum(allowed) => match v.as_str() {
             Some(s) if allowed.contains(&s) => {}
@@ -197,7 +212,10 @@ fn lint_permissions(perms: &Value, out: &mut Vec<LintItem>) {
     for list in ["allow", "ask", "deny"] {
         if let Some(v) = map.get(list) {
             if !is_string_array(v) {
-                out.push(warn(&format!("permissions.{list}"), "문자열 배열이어야 합니다".to_string()));
+                out.push(warn(
+                    &format!("permissions.{list}"),
+                    "문자열 배열이어야 합니다".to_string(),
+                ));
             }
         }
     }
@@ -208,7 +226,10 @@ fn lint_permissions(perms: &Value, out: &mut Vec<LintItem>) {
                 "permissions.defaultMode",
                 format!("허용값: {} (현재: \"{s}\")", DEFAULT_MODES.join(" | ")),
             )),
-            None => out.push(warn("permissions.defaultMode", "문자열이어야 합니다".to_string())),
+            None => out.push(warn(
+                "permissions.defaultMode",
+                "문자열이어야 합니다".to_string(),
+            )),
         }
     }
     if let Some(v) = map.get("additionalDirectories") {
