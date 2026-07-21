@@ -35,6 +35,9 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      - name: Verify project version
+        run: npm run version:check
+
       - name: Run unit tests
         run: npm test
 

@@ -52,6 +52,17 @@ npm run tauri dev        # launches the window
 npm run tauri build      # produces the installer
 ```
 
+### Windows prerelease
+
+Run **Actions → Build Windows Release → Run workflow** to create or update the
+`v0.1.0` GitHub pre-release. The workflow attaches an NSIS setup EXE, an MSI,
+and an unsigned portable EXE. The portable build still requires the Microsoft
+WebView2 Runtime and may trigger Windows SmartScreen until code signing is set up.
+
+The release workflow rejects inconsistent versions. `package.json`,
+`package-lock.json`, the Cargo workspace, and `src-tauri/tauri.conf.json` must
+all remain at the current development version, `0.1.0`.
+
 The live permission probe uses isolated temporary settings and does not modify
 your user or project settings. It verifies a PowerShell wildcard Allow, Deny
 precedence over a CLI Allow, and the `Invoke-WebRequest` web-block rule.
