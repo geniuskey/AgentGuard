@@ -3,6 +3,7 @@
   import { app } from '$lib/state.svelte';
 
   let kind = $state<'path' | 'command'>('path');
+  let shellTool = $state<'Bash' | 'PowerShell'>('PowerShell');
   let query = $state('');
   let result = $state<SimResult | null>(null);
   let error = $state<string | null>(null);
@@ -18,7 +19,7 @@
     running = true;
     error = null;
     try {
-      result = await simulateAccess(app.projectRoot, app.scoped, q, kind);
+      result = await simulateAccess(app.projectRoot, app.scoped, q, kind, shellTool);
     } catch (e) {
       error = String(e);
       result = null;
@@ -42,8 +43,14 @@
   <div class="controls">
     <div class="kinds">
       <button class:active={kind === 'path'} onclick={() => (kind = 'path')}>경로</button>
-      <button class:active={kind === 'command'} onclick={() => (kind = 'command')}>Bash 명령</button>
+      <button class:active={kind === 'command'} onclick={() => (kind = 'command')}>셸 명령</button>
     </div>
+    {#if kind === 'command'}
+      <select class="shell" bind:value={shellTool} aria-label="셸 도구">
+        <option value="PowerShell">PowerShell</option>
+        <option value="Bash">Bash</option>
+      </select>
+    {/if}
     <input
       type="text"
       bind:value={query}
@@ -61,7 +68,7 @@
     {#if kind === 'path'}
       현재 편집 중인 규칙 기준 (저장 전 변경 포함)
     {:else}
-      저장된 설정 파일의 Bash 규칙 기준{#if app.dirty}
+      저장된 설정 파일의 <b>{shellTool}</b> 규칙 기준{#if app.dirty}
         — 저장하지 않은 경로 규칙 변경은 반영되지 않음{/if}
     {/if}
   </p>
@@ -98,7 +105,7 @@
     {/if}
   {:else if !error}
     <p class="muted">
-      경로나 Bash 명령을 입력하면 어떤 규칙이 적용되어 허용/확인/차단되는지 보여줍니다.
+      경로나 셸 명령을 입력하면 어떤 규칙이 적용되어 허용/확인/차단되는지 보여줍니다.
     </p>
   {/if}
 </div>
@@ -145,6 +152,14 @@
     padding: 0.34rem 0.55rem;
     font-size: 0.78rem;
     font-family: var(--font-mono);
+  }
+  .shell {
+    background: var(--bg-1);
+    border: 1px solid var(--border-strong);
+    color: var(--text-1);
+    border-radius: var(--r-sm);
+    padding: 0.34rem 0.45rem;
+    font-size: 0.74rem;
   }
   input:focus {
     outline: none;

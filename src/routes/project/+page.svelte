@@ -5,6 +5,7 @@
     addLocalToGitignore,
     applyProfile,
     buildDiff,
+    claudeProjectTrustStatus,
     exportTemplate,
     gitignoreStatus,
     importTemplate,
@@ -20,6 +21,7 @@
     unwatchProject,
     watchProject,
     type BackupRecord,
+    type ClaudeProjectTrustStatus,
     type DiffView,
     type GitignoreStatus,
     type Policy,
@@ -42,6 +44,22 @@
   let backups = $state<BackupRecord[] | null>(null);
   let backupPreview = $state<{ rec: BackupRecord; text: string } | null>(null);
   let report = $state<string | null>(null);
+  let claudeTrust = $state<ClaudeProjectTrustStatus | null>(null);
+  const hasSharedAllow = $derived(
+    (claudeTrust?.sharedAllowRules ?? 0) > 0 ||
+      app.scoped.project.rules.some((rule) => rule.policy === 'allow')
+  );
+  const showTrustWarning = $derived(
+    claudeTrust !== null && !claudeTrust.accepted && hasSharedAllow
+  );
+
+  async function refreshClaudeTrust() {
+    try {
+      claudeTrust = await claudeProjectTrustStatus(app.projectRoot);
+    } catch {
+      claudeTrust = null;
+    }
+  }
 
   // External-change detection: watch the settings files while the page is open.
   let externalChange = $state<string | null>(null);
@@ -60,6 +78,7 @@
       }
       try {
         app.scoped = await loadSettings(app.projectRoot);
+        await refreshClaudeTrust();
         await refreshEffective();
         status = '설정 파일이 외부에서 변경되어 다시 불러왔습니다.';
       } catch (e) {
@@ -71,6 +90,7 @@
   async function reloadFromDisk() {
     try {
       app.scoped = await loadSettings(app.projectRoot);
+      await refreshClaudeTrust();
       app.dirty = false;
       await refreshEffective();
       externalChange = null;
@@ -90,6 +110,7 @@
     } catch {
       /* non-fatal */
     }
+    await refreshClaudeTrust();
     try {
       await watchProject(app.projectRoot);
       unlisten = await onSettingsFileChanged(onExternalChange);
@@ -156,6 +177,8 @@
         scopeRules: app.scoped[saveScope],
         projectName: app.projectName
       });
+      if (saveScope === 'project' && app.view) app.view.hasProjectSettings = true;
+      await refreshClaudeTrust();
       lastSaveAt = Date.now();
       app.dirty = false;
       diff = null;
@@ -188,6 +211,7 @@
       backups = null;
       // Reload rules to reflect restored file.
       app.scoped = await loadSettings(app.projectRoot);
+      await refreshClaudeTrust();
       await refreshEffective();
     } catch (e) {
       error = String(e);
@@ -314,6 +338,17 @@
         위험).
       </span>
       <button onclick={fixGitignore}>.gitignore에 추가</button>
+    </div>
+  {/if}
+
+  {#if showTrustWarning}
+    <div class="banner trust-banner" role="alert">
+      <span class="banner-icon" aria-hidden="true">⚠</span>
+      <span>
+        이 프로젝트는 아직 Claude Code에서 신뢰되지 않았습니다. 공유
+        <code>.claude/settings.json</code>의 Allow 규칙은 무시되고 Deny만 적용됩니다.
+        프로젝트 폴더에서 대화형 <code>claude</code>를 실행해 trust 확인을 승인하세요.
+      </span>
     </div>
   {/if}
 

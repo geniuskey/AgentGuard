@@ -10,6 +10,7 @@
 
 use crate::model::{PolicyRule, Scope};
 use crate::policy::{self, Permissions, UnmanagedRules};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,15 @@ pub struct ScopePaths {
     pub local: PathBuf,
 }
 
+/// Claude Code's persisted trust decision for one project. Only these booleans
+/// are surfaced; the rest of `~/.claude.json` may contain sensitive app state.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTrustStatus {
+    pub entry_found: bool,
+    pub accepted: bool,
+}
+
 /// Resolve the three settings file paths for `project_root`.
 pub fn scope_paths(project_root: &Path, home_dir: &Path) -> ScopePaths {
     ScopePaths {
@@ -28,6 +38,62 @@ pub fn scope_paths(project_root: &Path, home_dir: &Path) -> ScopePaths {
         project: project_root.join(".claude").join("settings.json"),
         local: project_root.join(".claude").join("settings.local.json"),
     }
+}
+
+fn normalized_project_key(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+    if trimmed.len() == 2 && trimmed.as_bytes()[1] == b':' {
+        format!("{trimmed}/")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn project_keys_equal(left: &str, right: &str) -> bool {
+    let left = normalized_project_key(left);
+    let right = normalized_project_key(right);
+    let windows_path = |s: &str| s.as_bytes().get(1) == Some(&b':');
+    if cfg!(windows) || (windows_path(&left) && windows_path(&right)) {
+        left.eq_ignore_ascii_case(&right)
+    } else {
+        left == right
+    }
+}
+
+/// Extract the trust bit for `project_root` from Claude Code's application-state
+/// JSON. Path separators and Windows drive-letter case are normalized.
+pub fn project_trust_from_value(state: &Value, project_root: &Path) -> ProjectTrustStatus {
+    let requested = project_root.to_string_lossy();
+    let Some(projects) = state.get("projects").and_then(Value::as_object) else {
+        return ProjectTrustStatus::default();
+    };
+    let Some((_, entry)) = projects
+        .iter()
+        .find(|(key, _)| project_keys_equal(key, &requested))
+    else {
+        return ProjectTrustStatus::default();
+    };
+    ProjectTrustStatus {
+        entry_found: true,
+        accepted: entry
+            .get("hasTrustDialogAccepted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+/// Read only the project trust decision from `~/.claude.json`.
+pub fn project_trust_status(
+    project_root: &Path,
+    home_dir: &Path,
+) -> crate::Result<ProjectTrustStatus> {
+    let state_file = home_dir.join(".claude.json");
+    if !state_file.exists() {
+        return Ok(ProjectTrustStatus::default());
+    }
+    let state: Value = serde_json::from_str(&std::fs::read_to_string(state_file)?)?;
+    Ok(project_trust_from_value(&state, project_root))
 }
 
 /// A parsed settings file: the full JSON tree plus extracted permissions.
@@ -156,6 +222,39 @@ mod tests {
         let s = parse(Scope::Project, "   ").unwrap();
         assert!(s.raw.is_object());
         assert!(s.permissions.allow.is_empty());
+    }
+
+    #[test]
+    fn project_trust_matches_windows_separator_and_case_variants() {
+        let state = serde_json::json!({
+            "projects": {
+                "D:/git/GeniusKey/AgentGuard": {
+                    "hasTrustDialogAccepted": true,
+                    "otherSensitiveState": "not surfaced"
+                }
+            }
+        });
+        let status = project_trust_from_value(&state, Path::new(r"d:\git\geniuskey\AgentGuard\"));
+        assert_eq!(
+            status,
+            ProjectTrustStatus {
+                entry_found: true,
+                accepted: true
+            }
+        );
+    }
+
+    #[test]
+    fn project_trust_missing_or_unaccepted_is_explicit() {
+        let missing = project_trust_from_value(&serde_json::json!({}), Path::new("/work/app"));
+        assert_eq!(missing, ProjectTrustStatus::default());
+
+        let state = serde_json::json!({
+            "projects": { "/work/app": { "hasTrustDialogAccepted": false } }
+        });
+        let untrusted = project_trust_from_value(&state, Path::new("/work/app"));
+        assert!(untrusted.entry_found);
+        assert!(!untrusted.accepted);
     }
 
     #[test]

@@ -1,16 +1,36 @@
 //! Policy simulator: answers "would Claude Code allow this?" for a concrete
-//! path or Bash command, with the matching rules as evidence.
+//! path or shell command, with the matching rules as evidence.
 //!
 //! Path queries reuse the effective merge (`effective.rs`) over the neutral
-//! rules. Command queries evaluate raw `Bash(...)` specifiers with Claude
-//! Code's prefix semantics (`Bash(npm run test:*)` = literal string prefix,
-//! bare `Bash` = everything). When nothing matches the decision falls back to
-//! Claude Code's normal prompt behavior (`ask`); deny > ask > allow otherwise.
+//! rules. Command queries evaluate raw `Bash(...)` or `PowerShell(...)`
+//! specifiers with Claude Code's wildcard semantics. When nothing matches the
+//! decision falls back to Claude Code's normal prompt behavior (`ask`);
+//! deny > ask > allow otherwise.
 
 use crate::effective::{self, ScopedRules};
 use crate::model::{AppliesTo, Policy, Scope};
 use crate::policy::{self, Permissions};
 use serde::Serialize;
+
+/// Shell tool whose permission rules should be evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellTool {
+    Bash,
+    PowerShell,
+}
+
+impl ShellTool {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bash => "Bash",
+            Self::PowerShell => "PowerShell",
+        }
+    }
+
+    fn case_insensitive(self) -> bool {
+        matches!(self, Self::PowerShell)
+    }
+}
 
 /// One rule that matched the query.
 #[derive(Debug, Clone, Serialize)]
@@ -71,33 +91,98 @@ fn display_rule(path: &str, applies_to: AppliesTo) -> String {
     policy::specifier_for(path, applies_to)
 }
 
-/// Does a raw permission rule string (e.g. `Bash(npm run test:*)`) match `cmd`?
-fn bash_rule_matches(raw: &str, cmd: &str) -> bool {
+/// Does a raw permission rule string match `cmd` for the selected shell tool?
+fn shell_rule_matches(raw: &str, cmd: &str, tool: ShellTool) -> bool {
     let s = raw.trim();
-    if s == "Bash" {
+    let name = tool.as_str();
+    if s == name {
         return true; // bare tool rule covers every command
     }
-    let Some(spec) = s.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')) else {
+    let prefix = format!("{name}(");
+    let Some(spec) = s.strip_prefix(&prefix).and_then(|r| r.strip_suffix(')')) else {
         return false;
     };
-    bash_specifier_matches(spec, cmd)
+    shell_specifier_matches(spec, cmd, tool.case_insensitive())
 }
 
-/// Claude Code Bash specifier semantics (approximation): `prefix:*` is a literal
-/// string prefix, `*` matches everything, anything else is an exact match.
-pub fn bash_specifier_matches(spec: &str, cmd: &str) -> bool {
-    let spec = spec.trim();
-    if spec == "*" {
+/// Match Claude Code shell-rule wildcards. `*` may occur anywhere and spans spaces.
+/// A trailing ` *` (or its `:*` alias) also matches the prefix with no arguments.
+fn shell_specifier_matches(spec: &str, cmd: &str, case_insensitive: bool) -> bool {
+    let mut pattern = spec.trim().to_string();
+    let mut command = cmd.trim().to_string();
+    if case_insensitive {
+        pattern = pattern.to_lowercase();
+        command = command.to_lowercase();
+    }
+    if pattern == "*" {
         return true;
     }
-    if let Some(prefix) = spec.strip_suffix(":*") {
-        return cmd.starts_with(prefix);
+
+    if let Some(prefix) = pattern.strip_suffix(":*") {
+        return command == prefix
+            || command
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.chars().next().is_some_and(char::is_whitespace));
     }
-    cmd == spec
+
+    // Claude treats `cmd *` as `cmd` or `cmd <anything>`; a normal glob matcher
+    // would miss the zero-argument form because of the literal space.
+    if let Some(prefix_pattern) = pattern.strip_suffix(" *") {
+        if wildcard_match(prefix_pattern, &command) {
+            return true;
+        }
+    }
+
+    wildcard_match(&pattern, &command)
 }
 
-/// Simulate a Bash command against the raw permission arrays of each scope.
-pub fn simulate_command(perms: &[(Scope, Permissions)], command: &str) -> SimResult {
+/// Small `*`-only glob matcher. Claude command rules do not give `?` or character
+/// classes special meaning, so keeping this local is less surprising than a
+/// filesystem glob implementation.
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let (mut p, mut t) = (0, 0);
+    let (mut star, mut retry_t) = (None, 0);
+
+    while t < text.len() {
+        if p < pattern.len() && pattern[p] == text[t] {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some(p);
+            p += 1;
+            retry_t = t;
+        } else if let Some(star_pos) = star {
+            p = star_pos + 1;
+            retry_t += 1;
+            t = retry_t;
+        } else {
+            return false;
+        }
+    }
+
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+/// Public helpers retained for callers/tests that need one shell's semantics.
+pub fn bash_specifier_matches(spec: &str, cmd: &str) -> bool {
+    shell_specifier_matches(spec, cmd, false)
+}
+
+pub fn powershell_specifier_matches(spec: &str, cmd: &str) -> bool {
+    shell_specifier_matches(spec, cmd, true)
+}
+
+/// Simulate a shell command against the raw permission arrays of each scope.
+pub fn simulate_command(
+    perms: &[(Scope, Permissions)],
+    command: &str,
+    tool: ShellTool,
+) -> SimResult {
     let cmd = command.trim();
     let mut matches = Vec::new();
     for (scope, p) in perms {
@@ -107,7 +192,7 @@ pub fn simulate_command(perms: &[(Scope, Permissions)], command: &str) -> SimRes
             (Policy::Allow, &p.allow),
         ] {
             for raw in arr {
-                if bash_rule_matches(raw, cmd) {
+                if shell_rule_matches(raw, cmd, tool) {
                     matches.push(SimMatch {
                         scope: *scope,
                         list,
@@ -160,16 +245,16 @@ mod tests {
             perms(&["Bash(npm run test:*)", "Bash(git status)"], &[], &[]),
         )];
 
-        let r = simulate_command(&scopes, "npm run test -- --watch");
+        let r = simulate_command(&scopes, "npm run test -- --watch", ShellTool::Bash);
         assert_eq!(r.decision, Policy::Allow);
         assert_eq!(r.matches.len(), 1);
         assert!(r.matches[0].decisive);
 
-        let r = simulate_command(&scopes, "git status");
+        let r = simulate_command(&scopes, "git status", ShellTool::Bash);
         assert_eq!(r.decision, Policy::Allow);
 
         // Exact rule does not cover arguments.
-        let r = simulate_command(&scopes, "git status --short");
+        let r = simulate_command(&scopes, "git status --short", ShellTool::Bash);
         assert!(r.fallback);
         assert_eq!(r.decision, Policy::Ask); // unmatched -> prompt
     }
@@ -180,7 +265,7 @@ mod tests {
             (Scope::User, perms(&[], &[], &["Bash(curl:*)"])),
             (Scope::Local, perms(&["Bash(curl:*)"], &[], &[])),
         ];
-        let r = simulate_command(&scopes, "curl https://example.com");
+        let r = simulate_command(&scopes, "curl https://example.com", ShellTool::Bash);
         assert_eq!(r.decision, Policy::Deny);
         assert_eq!(r.matches.len(), 2);
         let deny = r.matches.iter().find(|m| m.list == Policy::Deny).unwrap();
@@ -192,7 +277,7 @@ mod tests {
     #[test]
     fn bare_bash_rule_matches_everything() {
         let scopes = vec![(Scope::Project, perms(&[], &["Bash"], &[]))];
-        let r = simulate_command(&scopes, "anything at all");
+        let r = simulate_command(&scopes, "anything at all", ShellTool::Bash);
         assert_eq!(r.decision, Policy::Ask);
         assert!(!r.fallback);
     }
@@ -200,11 +285,11 @@ mod tests {
     #[test]
     fn command_fallback_is_ask() {
         let scopes = vec![(Scope::Project, perms(&[], &[], &[]))];
-        let r = simulate_command(&scopes, "rm -rf /");
+        let r = simulate_command(&scopes, "rm -rf /", ShellTool::Bash);
         assert!(r.fallback);
         assert_eq!(r.decision, Policy::Ask);
 
-        let r = simulate_command(&scopes, "ls");
+        let r = simulate_command(&scopes, "ls", ShellTool::Bash);
         assert!(r.fallback);
         assert_eq!(r.decision, Policy::Ask);
     }
@@ -215,9 +300,40 @@ mod tests {
             Scope::Project,
             perms(&["Read(./src/**)"], &[], &["WebFetch(domain:evil.example)"]),
         )];
-        let r = simulate_command(&scopes, "cat src/app.ts");
+        let r = simulate_command(&scopes, "cat src/app.ts", ShellTool::Bash);
         assert!(r.fallback);
         assert!(r.matches.is_empty());
+    }
+
+    #[test]
+    fn wildcard_matches_actual_claude_examples() {
+        assert!(bash_specifier_matches("npm run *", "npm run"));
+        assert!(bash_specifier_matches("npm run *", "npm run check"));
+        assert!(!bash_specifier_matches("npm run *", "npm runner"));
+        assert!(bash_specifier_matches("git * main", "git push origin main"));
+        assert!(bash_specifier_matches("* --version", "cargo --version"));
+        assert!(bash_specifier_matches("npm test:*", "npm test -- --watch"));
+        assert!(!bash_specifier_matches("npm test:*", "npm testing"));
+    }
+
+    #[test]
+    fn powershell_rules_are_case_insensitive_and_tool_specific() {
+        let scopes = vec![(
+            Scope::Local,
+            perms(
+                &["PowerShell(npm run *)"],
+                &[],
+                &["Bash(npm run dangerous)"],
+            ),
+        )];
+
+        let ps = simulate_command(&scopes, "NPM RUN CHECK", ShellTool::PowerShell);
+        assert_eq!(ps.decision, Policy::Allow);
+        assert_eq!(ps.matches[0].rule, "PowerShell(npm run *)");
+
+        let bash = simulate_command(&scopes, "npm run check", ShellTool::Bash);
+        assert!(bash.fallback);
+        assert_eq!(bash.decision, Policy::Ask);
     }
 
     #[test]

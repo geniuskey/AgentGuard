@@ -188,6 +188,31 @@ pub fn load_settings(project_root: String) -> Result<ScopedRulesDto, String> {
     })
 }
 
+/// Read Claude Code's trust bit plus the number of shared-project allow rules.
+/// Never returns any other content from the potentially sensitive ~/.claude.json.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeProjectTrustView {
+    pub entry_found: bool,
+    pub accepted: bool,
+    pub shared_allow_rules: usize,
+}
+
+#[tauri::command]
+pub fn claude_project_trust_status(project_root: String) -> Result<ClaudeProjectTrustView, String> {
+    let root = PathBuf::from(&project_root);
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let trust = settings::project_trust_status(&root, &home).map_err(|e| e.to_string())?;
+    let project_file = settings::scope_paths(&root, &home).project;
+    let text = std::fs::read_to_string(project_file).unwrap_or_default();
+    let loaded = settings::parse(Scope::Project, &text).map_err(|e| e.to_string())?;
+    Ok(ClaudeProjectTrustView {
+        entry_found: trust.entry_found,
+        accepted: trust.accepted,
+        shared_allow_rules: loaded.permissions.allow.len(),
+    })
+}
+
 /// Compute the effective (merged) policy for every distinct rule path.
 #[tauri::command]
 pub fn compute_effective(scoped: ScopedRulesDto) -> Result<Vec<EffectivePolicy>, String> {
@@ -1341,15 +1366,16 @@ pub fn agent_security_status(agent_id: String, text: String) -> Result<Vec<Agent
 // --- Policy simulator ----------------------------------------------------------
 
 /// Simulate a query against the policy. `kind: "path"` evaluates the current
-/// (possibly unsaved) editor rules; `kind: "command"` evaluates the raw Bash
-/// specifiers of the *saved* settings files, since Bash rules live outside the
-/// neutral path model.
+/// (possibly unsaved) editor rules; `kind: "command"` evaluates the selected
+/// shell tool's raw specifiers from the *saved* settings files, since shell
+/// rules live outside the neutral path model.
 #[tauri::command]
 pub fn simulate_access(
     project_root: String,
     scoped: ScopedRulesDto,
     query: String,
     kind: String,
+    shell_tool: Option<String>,
 ) -> Result<SimResult, String> {
     match kind.as_str() {
         "path" => Ok(simulate::simulate_path(&scoped.to_core(), &query)),
@@ -1362,7 +1388,12 @@ pub fn simulate_access(
                 let loaded = settings::parse(scope, &text).map_err(|e| e.to_string())?;
                 perms.push((scope, loaded.permissions));
             }
-            Ok(simulate::simulate_command(&perms, &query))
+            let tool = match shell_tool.as_deref().unwrap_or("PowerShell") {
+                "Bash" => simulate::ShellTool::Bash,
+                "PowerShell" => simulate::ShellTool::PowerShell,
+                other => return Err(format!("unknown shell tool: {other}")),
+            };
+            Ok(simulate::simulate_command(&perms, &query, tool))
         }
         other => Err(format!("unknown simulate kind: {other}")),
     }

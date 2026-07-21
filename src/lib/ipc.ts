@@ -76,6 +76,12 @@ export interface ProjectView {
   hasLocalSettings: boolean;
 }
 
+export interface ClaudeProjectTrustStatus {
+  entryFound: boolean;
+  accepted: boolean;
+  sharedAllowRules: number;
+}
+
 export interface EffectivePolicy {
   path: string;
   effective: Policy;
@@ -158,6 +164,14 @@ export async function listDir(projectRoot: string, relDir: string): Promise<DirE
 
 export async function loadSettings(projectRoot: string): Promise<ScopedRulesDto> {
   return invoke<ScopedRulesDto>('load_settings', { projectRoot });
+}
+
+/** Claude Code trust state for shared project allow rules; no other app state is exposed. */
+export async function claudeProjectTrustStatus(
+  projectRoot: string
+): Promise<ClaudeProjectTrustStatus> {
+  if (!inTauri()) return { entryFound: false, accepted: false, sharedAllowRules: 0 };
+  return invoke<ClaudeProjectTrustStatus>('claude_project_trust_status', { projectRoot });
 }
 
 export async function computeEffective(scoped: ScopedRulesDto): Promise<EffectivePolicy[]> {
@@ -498,15 +512,16 @@ export interface SimResult {
 
 /**
  * Simulate a query. `path` evaluates the current editor rules (unsaved edits
- * included); `command` evaluates the saved settings files' Bash rules.
+ * included); `command` evaluates the selected shell tool's saved rules.
  */
 export async function simulateAccess(
   projectRoot: string,
   scoped: ScopedRulesDto,
   query: string,
-  kind: 'path' | 'command'
+  kind: 'path' | 'command',
+  shellTool: 'Bash' | 'PowerShell' = 'PowerShell'
 ): Promise<SimResult> {
-  return invoke<SimResult>('simulate_access', { projectRoot, scoped, query, kind });
+  return invoke<SimResult>('simulate_access', { projectRoot, scoped, query, kind, shellTool });
 }
 
 // --- Agent surface: hooks & MCP servers ----------------------------------------
