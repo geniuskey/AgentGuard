@@ -10,6 +10,7 @@
     gitignoreStatus,
     importTemplate,
     listBackups,
+    listSensitivePaths,
     loadSettings,
     onSettingsFileChanged,
     policyReport,
@@ -18,6 +19,7 @@
     saveReportFile,
     saveSettings,
     scanRecommendationRules,
+    setSensitivePathDismissed,
     unwatchProject,
     watchProject,
     type BackupRecord,
@@ -25,7 +27,8 @@
     type DiffView,
     type GitignoreStatus,
     type Policy,
-    type ScopeName
+    type ScopeName,
+    type SensitivePathRecord
   } from '$lib/ipc';
   import { app, mergeRules, refreshEffective, setPolicy } from '$lib/state.svelte';
   import FileExplorer from '$lib/components/FileExplorer.svelte';
@@ -33,8 +36,12 @@
   import EffectivePreview from '$lib/components/EffectivePreview.svelte';
   import RawJsonEditor from '$lib/components/RawJsonEditor.svelte';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
+  import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
+  import { modalFocus } from '$lib/modal';
+  import { confirmDiscardChanges, isUnsavedSource } from '$lib/unsaved';
 
   let rightMode = $state<'effective' | 'raw'>('effective');
+  let workspaceMode = $state<'files' | 'policy' | 'preview'>('policy');
   let saving = $state(false);
   let error = $state<string | null>(null);
   let diff = $state<DiffView | null>(null);
@@ -42,6 +49,8 @@
   let profile = $state('');
   let gitignore = $state<GitignoreStatus | null>(null);
   let backups = $state<BackupRecord[] | null>(null);
+  let sensitivePaths = $state<SensitivePathRecord[]>([]);
+  let showSensitivePaths = $state(false);
   let backupPreview = $state<{ rec: BackupRecord; text: string } | null>(null);
   let report = $state<string | null>(null);
   let claudeTrust = $state<ClaudeProjectTrustStatus | null>(null);
@@ -52,6 +61,7 @@
   const showTrustWarning = $derived(
     claudeTrust !== null && !claudeTrust.accepted && hasSharedAllow
   );
+  const activeSensitiveCount = $derived(sensitivePaths.filter((item) => !item.dismissed).length);
 
   async function refreshClaudeTrust() {
     try {
@@ -110,6 +120,8 @@
     } catch {
       /* non-fatal */
     }
+    sensitivePaths = app.view?.sensitivePaths ?? [];
+    profile = app.view?.project.riskProfile ?? '';
     await refreshClaudeTrust();
     try {
       await watchProject(app.projectRoot);
@@ -130,6 +142,7 @@
     try {
       const plan = await applyProfile(app.projectRoot, profile);
       mergeRules(app.activeScope, plan.rules);
+      if (app.view) app.view.project.riskProfile = profile;
       await refreshEffective();
     } catch (e) {
       error = String(e);
@@ -200,13 +213,13 @@
   }
 
   async function showBackup(rec: BackupRecord) {
-    backupPreview = { rec, text: await previewBackup(rec.backupPath) };
+    backupPreview = { rec, text: await previewBackup(rec.id) };
   }
 
   async function doRestore(rec: BackupRecord) {
     try {
       lastSaveAt = Date.now();
-      await restoreBackup(rec.backupPath, rec.originalPath);
+      await restoreBackup(rec.id);
       backupPreview = null;
       backups = null;
       // Reload rules to reflect restored file.
@@ -278,6 +291,36 @@
     await refreshEffective();
   }
 
+  async function openSensitivePaths() {
+    try {
+      sensitivePaths = await listSensitivePaths(app.projectId);
+      showSensitivePaths = true;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function toggleSensitivePath(item: SensitivePathRecord) {
+    try {
+      await setSensitivePathDismissed(app.projectId, item.id, !item.dismissed);
+      item.dismissed = !item.dismissed;
+      if (app.view) app.view.sensitivePaths = sensitivePaths;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  function setRightMode(next: 'effective' | 'raw') {
+    if (next === rightMode) return;
+    if (
+      rightMode === 'raw' &&
+      !confirmDiscardChanges(isUnsavedSource('raw-settings-project'), window.confirm.bind(window))
+    ) {
+      return;
+    }
+    rightMode = next;
+  }
+
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
     if (t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;
@@ -294,6 +337,7 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+<UnsavedMarker id="project-rules" when={app.dirty} />
 
 <div class="page">
   <div class="top">
@@ -316,6 +360,7 @@
         <option value="custom">Custom</option>
       </select>
       <button class="mini" onclick={applyScanRecommendations}>추천 적용</button>
+      <button class="mini" onclick={openSensitivePaths}>민감 경로 {activeSensitiveCount}</button>
       <span class="sep" aria-hidden="true"></span>
       <button class="mini" onclick={() => goto('/env')}>Env</button>
       <button class="mini" onclick={openBackups}>Backups</button>
@@ -369,15 +414,33 @@
   {#if error}<div class="err" role="alert">{error}</div>{/if}
   {#if status}<div class="status" role="status">{status}</div>{/if}
 
+  <nav class="workspace-tabs" aria-label="편집 영역">
+    <button
+      class:active={workspaceMode === 'files'}
+      aria-pressed={workspaceMode === 'files'}
+      onclick={() => (workspaceMode = 'files')}>Files</button
+    >
+    <button
+      class:active={workspaceMode === 'policy'}
+      aria-pressed={workspaceMode === 'policy'}
+      onclick={() => (workspaceMode = 'policy')}>Policy</button
+    >
+    <button
+      class:active={workspaceMode === 'preview'}
+      aria-pressed={workspaceMode === 'preview'}
+      onclick={() => (workspaceMode = 'preview')}>Preview</button
+    >
+  </nav>
+
   <div class="cols">
-    <section class="left"><FileExplorer /></section>
-    <section class="mid"><PolicyEditor /></section>
-    <section class="right">
+    <section class="left" class:active={workspaceMode === 'files'} aria-label="파일 탐색기"><FileExplorer /></section>
+    <section class="mid" class:active={workspaceMode === 'policy'} aria-label="정책 편집기"><PolicyEditor /></section>
+    <section class="right" class:active={workspaceMode === 'preview'} aria-label="적용 결과 미리보기">
       <div class="rmode">
-        <button class:active={rightMode === 'effective'} onclick={() => (rightMode = 'effective')}>
+        <button class:active={rightMode === 'effective'} onclick={() => setRightMode('effective')}>
           Effective
         </button>
-        <button class:active={rightMode === 'raw'} onclick={() => (rightMode = 'raw')}>Raw JSON</button>
+        <button class:active={rightMode === 'raw'} onclick={() => setRightMode('raw')}>Raw JSON</button>
       </div>
       {#if rightMode === 'effective'}<EffectivePreview />{:else}<RawJsonEditor />{/if}
     </section>
@@ -385,13 +448,20 @@
 </div>
 
 {#if diff}
-  <div class="modal-bg" role="presentation" onclick={() => (diff = null)}>
-    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-      <h3>저장 전 변경 확인 — {saveScope} scope</h3>
+  <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) diff = null; }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="project-save-title"
+      tabindex="-1"
+      use:modalFocus={() => (diff = null)}
+    >
+      <h3 id="project-save-title">저장 전 변경 확인 — {saveScope} scope</h3>
       <p class="fp">{diff.path}</p>
       {#if diff.changed}<DiffViewer {diff} />{:else}<p class="nochg">변경 사항이 없습니다.</p>{/if}
       <div class="modal-actions">
-        <button onclick={() => (diff = null)}>취소</button>
+        <button data-modal-initial onclick={() => (diff = null)}>취소</button>
         <button class="primary" onclick={confirmSave} disabled={saving || !diff.changed}>
           {saving ? '저장 중…' : '백업 후 저장'}
         </button>
@@ -401,9 +471,24 @@
 {/if}
 
 {#if backups}
-  <div class="modal-bg" role="presentation" onclick={() => (backups = null)}>
-    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-      <h3>백업 복원</h3>
+  <div class="modal-bg" role="presentation" onclick={(e) => {
+    if (e.target === e.currentTarget) {
+      backups = null;
+      backupPreview = null;
+    }
+  }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="project-backups-title"
+      tabindex="-1"
+      use:modalFocus={() => {
+        backups = null;
+        backupPreview = null;
+      }}
+    >
+      <h3 id="project-backups-title">백업 복원</h3>
       {#if backups.length === 0}
         <p class="nochg">백업이 없습니다.</p>
       {:else}
@@ -423,19 +508,59 @@
         <pre class="preview">{backupPreview.text}</pre>
       {/if}
       <div class="modal-actions">
-        <button onclick={() => { backups = null; backupPreview = null; }}>닫기</button>
+        <button data-modal-initial onclick={() => { backups = null; backupPreview = null; }}>닫기</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showSensitivePaths}
+  <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showSensitivePaths = false; }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sensitive-paths-title"
+      tabindex="-1"
+      use:modalFocus={() => (showSensitivePaths = false)}
+    >
+      <h3 id="sensitive-paths-title">스캐너 민감 경로</h3>
+      <p class="nochg">무시한 경로는 다음 스캔과 프로필 추천에서 제외됩니다.</p>
+      {#if sensitivePaths.length === 0}
+        <p class="nochg">발견된 민감 경로가 없습니다.</p>
+      {:else}
+        <ul class="blist">
+          {#each sensitivePaths as item (item.id)}
+            <li>
+              <span class="binfo"><code>{item.path}</code> · {item.source}</span>
+              <button onclick={() => toggleSensitivePath(item)}>
+                {item.dismissed ? '다시 추천' : '무시'}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <div class="modal-actions">
+        <button data-modal-initial onclick={() => (showSensitivePaths = false)}>닫기</button>
       </div>
     </div>
   </div>
 {/if}
 
 {#if report}
-  <div class="modal-bg" role="presentation" onclick={() => (report = null)}>
-    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-      <h3>Policy Report (Markdown)</h3>
+  <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) report = null; }}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="project-report-title"
+      tabindex="-1"
+      use:modalFocus={() => (report = null)}
+    >
+      <h3 id="project-report-title">Policy Report (Markdown)</h3>
       <pre class="preview">{report}</pre>
       <div class="modal-actions">
-        <button onclick={() => (report = null)}>닫기</button>
+        <button data-modal-initial onclick={() => (report = null)}>닫기</button>
         <button onclick={copyReport}>클립보드에 복사</button>
         <button class="primary" onclick={saveReport}>파일로 저장</button>
       </div>
@@ -639,6 +764,9 @@
     flex: 1;
     min-height: 0;
   }
+  .workspace-tabs {
+    display: none;
+  }
   .left {
     border-right: 1px solid var(--border);
   }
@@ -741,5 +869,97 @@
     overflow: auto;
     white-space: pre-wrap;
     margin-top: 0.6rem;
+  }
+
+  @media (max-width: 1100px) {
+    .page {
+      height: 100dvh;
+      overflow: hidden;
+    }
+    .top .tools {
+      order: 3;
+      flex: 1 0 100%;
+      flex-wrap: nowrap;
+      max-width: 100%;
+      overflow-x: auto;
+      padding-bottom: 0.15rem;
+    }
+    .top .tools > * {
+      flex-shrink: 0;
+    }
+    .workspace-tabs {
+      display: flex;
+      flex-shrink: 0;
+      gap: 0.25rem;
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-1);
+      overflow-x: auto;
+    }
+    .workspace-tabs button {
+      flex: 1 0 auto;
+      min-width: 5.5rem;
+      border: 1px solid transparent;
+      border-radius: var(--r-sm);
+      background: transparent;
+      color: var(--text-2);
+      padding: 0.32rem 0.7rem;
+      cursor: pointer;
+    }
+    .workspace-tabs button.active {
+      border-color: rgba(79, 142, 247, 0.35);
+      background: var(--accent-soft);
+      color: var(--accent-text);
+    }
+    .cols {
+      display: block;
+      overflow: hidden;
+    }
+    .cols section {
+      display: none;
+      width: 100%;
+      height: 100%;
+      border-right: 0;
+    }
+    .cols section.active {
+      display: block;
+    }
+    .cols .right.active {
+      display: flex;
+    }
+    .rmode {
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+    .rmode button {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .top {
+      gap: 0.4rem;
+      padding: 0.45rem 0.55rem;
+    }
+    .title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .risk {
+      display: none;
+    }
+    .save {
+      padding-inline: 0.7rem;
+    }
+    .banner {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .banner-actions {
+      flex-basis: 100%;
+    }
   }
 </style>

@@ -3,7 +3,7 @@
 // developed without building the desktop app.
 
 export type Policy = 'allow' | 'ask' | 'deny';
-export type ScopeName = 'user' | 'project' | 'local';
+export type ScopeName = 'managed' | 'user' | 'project' | 'local';
 export type AppliesTo = 'file' | 'folder' | 'folder-and-children' | 'pattern';
 export type Tool = 'Read' | 'Edit';
 
@@ -28,9 +28,13 @@ export interface ScopeRules {
   rules: PolicyRule[];
   /** Non-path tool denies toggled on (web/network capability block). */
   extraDeny: string[];
+  /** Administrator policy makes managed allow/ask/deny rules exclusive. */
+  enforceManagedOnly?: boolean;
 }
 
 export interface ScopedRulesDto {
+  /** Administrator policy loaded from the local managed file tier; always read-only. */
+  managed: ScopeRules;
   user: ScopeRules;
   project: ScopeRules;
   local: ScopeRules;
@@ -71,9 +75,18 @@ export interface ProjectView {
   project: ProjectRecord;
   tree: DirEntry[];
   scan: ScanResult;
+  sensitivePaths: SensitivePathRecord[];
   risk: RiskScore;
   hasProjectSettings: boolean;
   hasLocalSettings: boolean;
+}
+
+export interface SensitivePathRecord {
+  id: string;
+  projectId: string;
+  path: string;
+  source: string;
+  dismissed: boolean;
 }
 
 export interface ClaudeProjectTrustStatus {
@@ -164,6 +177,10 @@ export async function listDir(projectRoot: string, relDir: string): Promise<DirE
 
 export async function loadSettings(projectRoot: string): Promise<ScopedRulesDto> {
   return invoke<ScopedRulesDto>('load_settings', { projectRoot });
+}
+
+export async function diagnosticReport(projectRoot?: string): Promise<string> {
+  return invoke<string>('diagnostic_report', { projectRoot: projectRoot || null });
 }
 
 /** Claude Code trust state for shared project allow rules; no other app state is exposed. */
@@ -269,16 +286,27 @@ export async function listBackups(projectId: string): Promise<BackupRecord[]> {
   return invoke<BackupRecord[]>('list_backups', { projectId });
 }
 
-export async function previewBackup(backupPath: string): Promise<string> {
-  return invoke<string>('preview_backup', { backupPath });
+export async function previewBackup(backupId: string): Promise<string> {
+  return invoke<string>('preview_backup', { backupId });
 }
 
-export async function restoreBackup(backupPath: string, targetPath: string): Promise<void> {
+export async function restoreBackup(backupId: string): Promise<void> {
   return invoke<void>('restore_backup', {
-    backupPath,
-    targetPath,
+    backupId,
     timestamp: backupTimestamp()
   });
+}
+
+export async function listSensitivePaths(projectId: string): Promise<SensitivePathRecord[]> {
+  return invoke<SensitivePathRecord[]>('list_sensitive_paths', { projectId });
+}
+
+export async function setSensitivePathDismissed(
+  projectId: string,
+  id: string,
+  dismissed: boolean
+): Promise<void> {
+  return invoke<void>('set_sensitive_path_dismissed', { projectId, id, dismissed });
 }
 
 export async function scanRecommendationRules(projectRoot: string): Promise<PolicyRule[]> {
@@ -330,35 +358,27 @@ export async function policyReport(args: {
 /** Export the current rule set to a user-chosen `.json` file. Returns the path, or null if cancelled. */
 export async function exportTemplate(scoped: ScopedRulesDto, defaultName: string): Promise<string | null> {
   const text = await invoke<string>('export_template', { scoped });
-  const { save } = await import('@tauri-apps/plugin-dialog');
-  const path = await save({
-    defaultPath: `${defaultName}-agentguard-template.json`,
-    filters: [{ name: 'JSON', extensions: ['json'] }]
+  return invoke<string | null>('save_export_file', {
+    kind: 'policy-template',
+    defaultName,
+    contents: text
   });
-  if (!path) return null;
-  await invoke<void>('write_text_file', { path, contents: text });
-  return path;
 }
 
 /** Import a rule set from a user-chosen `.json` file. Returns the parsed rules, or null if cancelled. */
 export async function importTemplate(): Promise<ScopedRulesDto | null> {
-  const { open } = await import('@tauri-apps/plugin-dialog');
-  const path = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
-  if (typeof path !== 'string') return null;
-  const text = await invoke<string>('read_text_file', { path });
-  return invoke<ScopedRulesDto>('import_template', { text });
+  const selected = await invoke<{ path: string; text: string } | null>('pick_policy_template');
+  if (!selected) return null;
+  return invoke<ScopedRulesDto>('import_template', { text: selected.text });
 }
 
 /** Save Markdown report text to a user-chosen file. Returns the path or null. */
 export async function saveReportFile(markdown: string, defaultName: string): Promise<string | null> {
-  const { save } = await import('@tauri-apps/plugin-dialog');
-  const path = await save({
-    defaultPath: `${defaultName}-policy-report.md`,
-    filters: [{ name: 'Markdown', extensions: ['md'] }]
+  return invoke<string | null>('save_export_file', {
+    kind: 'policy-report',
+    defaultName,
+    contents: markdown
   });
-  if (!path) return null;
-  await invoke<void>('write_text_file', { path, contents: markdown });
-  return path;
 }
 
 // --- Multi-agent global settings hub ----------------------------------------
@@ -383,8 +403,8 @@ export async function getAgentGlobal(id: string): Promise<AgentGlobal> {
   return invoke<AgentGlobal>('get_agent_global', { id });
 }
 
-export async function readAgentConfig(path: string): Promise<string> {
-  return invoke<string>('read_agent_config', { path });
+export async function readAgentConfig(agentId: string): Promise<string> {
+  return invoke<string>('read_agent_config', { agentId });
 }
 
 export async function validateConfig(text: string, format: string): Promise<string | null> {
@@ -392,15 +412,11 @@ export async function validateConfig(text: string, format: string): Promise<stri
 }
 
 export async function saveAgentConfig(args: {
-  path: string;
   text: string;
-  format: string;
   agentId: string;
 }): Promise<SaveResult> {
   return invoke<SaveResult>('save_agent_config', {
-    path: args.path,
     text: args.text,
-    format: args.format,
     agentId: args.agentId,
     timestamp: backupTimestamp()
   });
@@ -546,7 +562,10 @@ export interface HookEntry {
   scope: ScopeName;
   event: string;
   matcher: string | null;
+  handlerType: 'command' | 'prompt' | 'agent' | 'http' | 'mcp' | string;
   command: string;
+  riskLevel: 'medium' | 'high';
+  usesWeb: boolean;
 }
 
 export interface McpServer {
@@ -556,6 +575,8 @@ export interface McpServer {
   target: string;
   /** Likely talks to the internet (remote transport or web-fetching stdio server). */
   usesWeb: boolean;
+  active: boolean;
+  statusReason: string;
 }
 
 export interface AgentSurface {

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 
 /// SQLite connection held in Tauri managed state.
 pub struct Db(pub Mutex<Connection>);
@@ -41,6 +42,45 @@ pub fn app_info() -> Result<AppInfo, String> {
     })
 }
 
+/// Privacy-preserving diagnostics: versions and file presence only. No setting
+/// values, environment values, project filenames, or credentials are included.
+#[tauri::command]
+pub fn diagnostic_report(project_root: Option<String>) -> Result<String, String> {
+    let data_dir = paths::app_data_dir().map_err(|e| e.to_string())?;
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let mut lines = vec![
+        "# Agent Guard diagnostics".to_string(),
+        format!("- appVersion: {}", env!("CARGO_PKG_VERSION")),
+        format!("- dbSchemaVersion: {}", db::SCHEMA_VERSION),
+        format!("- os: {}", std::env::consts::OS),
+        format!("- arch: {}", std::env::consts::ARCH),
+        format!("- dataDirectoryExists: {}", data_dir.is_dir()),
+        format!(
+            "- managedFileTierPresent: {}",
+            settings::load_file_managed_settings(&program_files_dir()).is_some()
+        ),
+        format!(
+            "- userSettingsPresent: {}",
+            home.join(".claude/settings.json").is_file()
+        ),
+    ];
+    if let Some(root) = project_root.filter(|root| !root.is_empty()) {
+        let root = PathBuf::from(root);
+        let scope_paths = settings::scope_paths(&root, &home);
+        lines.extend([
+            format!("- projectDirectoryExists: {}", root.is_dir()),
+            format!(
+                "- projectSettingsPresent: {}",
+                scope_paths.project.is_file()
+            ),
+            format!("- localSettingsPresent: {}", scope_paths.local.is_file()),
+            format!("- projectMcpPresent: {}", root.join(".mcp.json").is_file()),
+        ]);
+    }
+    lines.push("- contentsIncluded: false".to_string());
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
 /// Everything the Explorer needs right after opening a project.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +88,7 @@ pub struct ProjectView {
     pub project: ProjectRecord,
     pub tree: Vec<DirEntry>,
     pub scan: ScanResult,
+    pub sensitive_paths: Vec<db::SensitivePathRecord>,
     pub risk: RiskScore,
     pub has_project_settings: bool,
     pub has_local_settings: bool,
@@ -57,6 +98,52 @@ fn project_name(path: &Path) -> String {
     path.file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+/// Missing optional configuration is an empty document. Other read failures
+/// (ACL denial, sharing violation, invalid encoding) must remain visible so a
+/// subsequent save never looks like it is replacing an empty file.
+fn read_optional_text(path: &Path) -> Result<String, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(format!("failed to read {}: {error}", path.display())),
+    }
+}
+
+fn ensure_path_within(path: &Path, root: &Path, label: &str) -> Result<(), String> {
+    let resolved_root = root
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve {}: {error}", root.display()))?;
+    let resolved_path = path
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve {}: {error}", path.display()))?;
+    if resolved_path.starts_with(&resolved_root) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} path is outside Agent Guard storage: {}",
+            path.display()
+        ))
+    }
+}
+
+fn sync_sensitive_paths(
+    conn: &mut Connection,
+    project_id: &str,
+    scan: &mut ScanResult,
+) -> Result<Vec<db::SensitivePathRecord>, String> {
+    db::save_sensitive_paths(conn, project_id, &scan.deny_candidates, "scanner")
+        .map_err(|e| e.to_string())?;
+    let records = db::list_sensitive_paths(conn, project_id).map_err(|e| e.to_string())?;
+    let dismissed: std::collections::HashSet<&str> = records
+        .iter()
+        .filter(|item| item.dismissed)
+        .map(|item| item.path.as_str())
+        .collect();
+    scan.deny_candidates
+        .retain(|candidate| !dismissed.contains(candidate.as_str()));
+    Ok(records)
 }
 
 #[tauri::command]
@@ -75,7 +162,7 @@ pub fn open_project(
     // into the risk signals before scoring.
     let surface = agent_surface(&root, &home);
     scan.signals.has_hooks = !surface.hooks.is_empty();
-    scan.signals.has_mcp_servers = !surface.mcp_servers.is_empty();
+    scan.signals.has_mcp_servers = surface.mcp_servers.iter().any(|server| server.active);
     let risk = risk::score(&scan.signals);
     let tree = fs_scan::list_dir(&root, "").map_err(|e| e.to_string())?;
 
@@ -92,17 +179,18 @@ pub fn open_project(
 
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
     let id = db::upsert_project(&conn, &record).map_err(|e| e.to_string())?;
-    db::save_sensitive_paths(&mut conn, &id, &scan.deny_candidates, "scanner")
-        .map_err(|e| e.to_string())?;
+    let sensitive_paths = sync_sensitive_paths(&mut conn, &id, &mut scan)?;
 
     let sp = settings::scope_paths(&root, &home);
-    let mut record = record;
-    record.id = id;
+    let record = db::get_project_by_path(&conn, &root.to_string_lossy())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("project disappeared after upsert: {id}"))?;
 
     Ok(ProjectView {
         project: record,
         tree,
         scan,
+        sensitive_paths,
         risk,
         has_project_settings: sp.project.exists(),
         has_local_settings: sp.local.exists(),
@@ -149,11 +237,17 @@ pub struct ScopeRules {
     /// Non-path deny specifiers currently toggled on (subset of [`WEB_DENY`]).
     #[serde(default)]
     pub extra_deny: Vec<String>,
+    /// Claude Code administrator switch that makes managed permission rules the
+    /// only rules considered for allow/ask/deny decisions.
+    #[serde(default)]
+    pub enforce_managed_only: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ScopedRulesDto {
+    #[serde(default)]
+    pub managed: ScopeRules,
     pub user: ScopeRules,
     pub project: ScopeRules,
     pub local: ScopeRules,
@@ -161,26 +255,102 @@ pub struct ScopedRulesDto {
 
 impl ScopedRulesDto {
     fn to_core(&self) -> ScopedRules {
+        let managed_only = self.managed.enforce_managed_only;
         ScopedRules {
-            user: self.user.rules.clone(),
-            project: self.project.rules.clone(),
-            local: self.local.rules.clone(),
+            managed: self.managed.rules.clone(),
+            user: if managed_only {
+                Vec::new()
+            } else {
+                self.user.rules.clone()
+            },
+            project: if managed_only {
+                Vec::new()
+            } else {
+                self.project.rules.clone()
+            },
+            local: if managed_only {
+                Vec::new()
+            } else {
+                self.local.rules.clone()
+            },
         }
     }
 }
 
 fn scope_file(root: &Path, scope: Scope) -> Result<PathBuf, String> {
+    if scope == Scope::Managed {
+        return Err("managed settings are read-only".to_string());
+    }
     let sp = settings::scope_paths(root, &paths::home_dir().map_err(|e| e.to_string())?);
     Ok(match scope {
+        Scope::Managed => unreachable!("handled above"),
         Scope::User => sp.user,
         Scope::Project => sp.project,
         Scope::Local => sp.local,
     })
 }
 
+fn program_files_dir() -> PathBuf {
+    std::env::var_os("ProgramFiles")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
+}
+
+fn managed_scope() -> ScopeRules {
+    let program_files = program_files_dir();
+    let Some(loaded) = settings::load_file_managed_settings(&program_files) else {
+        return ScopeRules::default();
+    };
+    let (rules, unmanaged) = policy::from_permissions(&loaded.permissions);
+    let extra_deny = WEB_DENY
+        .iter()
+        .filter(|w| unmanaged.deny.iter().any(|d| d == **w))
+        .map(|w| w.to_string())
+        .collect();
+    let enforce_managed_only = loaded
+        .raw
+        .get("allowManagedPermissionRulesOnly")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    ScopeRules {
+        rules,
+        extra_deny,
+        enforce_managed_only,
+    }
+}
+
+fn rules_for_scope_mut(dto: &mut ScopedRulesDto, scope: Scope) -> &mut Vec<PolicyRule> {
+    match scope {
+        Scope::Managed => &mut dto.managed.rules,
+        Scope::User => &mut dto.user.rules,
+        Scope::Project => &mut dto.project.rules,
+        Scope::Local => &mut dto.local.rules,
+    }
+}
+
+/// Restore SQLite-only annotations after folding the authoritative settings
+/// files. Path + policy identifies a row; policy is included so an external
+/// allow-to-deny edit never inherits stale annotations from the old decision.
+fn merge_stored_rule_metadata(dto: &mut ScopedRulesDto, stored: Vec<db::ScopedRuleRow>) {
+    for saved in stored {
+        let Some(rule) = rules_for_scope_mut(dto, saved.scope)
+            .iter_mut()
+            .find(|rule| rule.path == saved.rule.path && rule.policy == saved.rule.policy)
+        else {
+            continue;
+        };
+        if saved.rule.tools.is_some() {
+            rule.tools = saved.rule.tools;
+        }
+        rule.reason = saved.rule.reason;
+        rule.risk_level = saved.rule.risk_level;
+        rule.notes = saved.rule.notes;
+    }
+}
+
 fn read_scope(root: &Path, scope: Scope) -> Result<ScopeRules, String> {
     let file = scope_file(root, scope)?;
-    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    let text = read_optional_text(&file)?;
     let loaded = settings::parse(scope, &text).map_err(|e| e.to_string())?;
     let (rules, unmanaged) = policy::from_permissions(&loaded.permissions);
     // Surface which capability denies are currently present so the UI toggle reflects state.
@@ -189,18 +359,33 @@ fn read_scope(root: &Path, scope: Scope) -> Result<ScopeRules, String> {
         .filter(|w| unmanaged.deny.iter().any(|d| d == **w))
         .map(|w| w.to_string())
         .collect();
-    Ok(ScopeRules { rules, extra_deny })
+    Ok(ScopeRules {
+        rules,
+        extra_deny,
+        enforce_managed_only: false,
+    })
 }
 
-/// Load the managed (folded) rules for all three scopes.
+/// Load folded rules for the read-only managed tier and three writable scopes.
 #[tauri::command]
-pub fn load_settings(project_root: String) -> Result<ScopedRulesDto, String> {
+pub fn load_settings(state: State<Db>, project_root: String) -> Result<ScopedRulesDto, String> {
     let root = PathBuf::from(&project_root);
-    Ok(ScopedRulesDto {
+    let mut dto = ScopedRulesDto {
+        managed: managed_scope(),
         user: read_scope(&root, Scope::User)?,
         project: read_scope(&root, Scope::Project)?,
         local: read_scope(&root, Scope::Local)?,
-    })
+    };
+    if !project_root.is_empty() {
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        if let Some(project) =
+            db::get_project_by_path(&conn, &project_root).map_err(|e| e.to_string())?
+        {
+            let stored = db::load_project_paths(&conn, &project.id).map_err(|e| e.to_string())?;
+            merge_stored_rule_metadata(&mut dto, stored);
+        }
+    }
+    Ok(dto)
 }
 
 /// Read Claude Code's trust bit plus the number of shared-project allow rules.
@@ -264,7 +449,7 @@ fn render_scope(
     sr: &ScopeRules,
 ) -> Result<(PathBuf, String, String), String> {
     let file = scope_file(root, scope)?;
-    let before = std::fs::read_to_string(&file).unwrap_or_default();
+    let before = read_optional_text(&file)?;
     let loaded = settings::parse(scope, &before).map_err(|e| e.to_string())?;
     let (_managed, mut unmanaged) = policy::from_permissions(&loaded.permissions);
     // Reconcile app-toggled capability denies: drop all known ones, then add those
@@ -304,6 +489,26 @@ pub struct SaveResult {
     pub backup: Option<String>,
 }
 
+fn rollback_written_file(file: &Path, previous: Option<&PathBuf>) -> Result<(), String> {
+    match previous {
+        Some(backup_path) => backup::restore(backup_path, file).map_err(|error| error.to_string()),
+        None => match std::fs::remove_file(file) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        },
+    }
+}
+
+fn metadata_failure_after_write(file: &Path, previous: Option<&PathBuf>, error: String) -> String {
+    match rollback_written_file(file, previous) {
+        Ok(()) => format!("metadata update failed; settings file was rolled back: {error}"),
+        Err(rollback_error) => format!(
+            "metadata update failed and settings rollback also failed: {error}; rollback: {rollback_error}"
+        ),
+    }
+}
+
 /// Save one scope: back up the existing file, then atomically write the rendered
 /// settings, and persist the rule metadata to SQLite (D3). Never writes on failure.
 #[tauri::command]
@@ -324,6 +529,7 @@ pub fn save_settings(
     // Back up existing file.
     let backups = paths::backups_dir().map_err(|e| e.to_string())?;
     let scope_label = match scope {
+        Scope::Managed => return Err("managed settings are read-only".to_string()),
         Scope::User => "user-settings",
         Scope::Project => "project-settings",
         Scope::Local => "local-settings",
@@ -348,7 +554,7 @@ pub fn save_settings(
     } else {
         Some(project_id.as_str())
     };
-    {
+    let db_result: Result<(), String> = (|| {
         let mut conn = state.0.lock().map_err(|e| e.to_string())?;
         if let Some(pid) = proj_id {
             db::save_project_paths(&mut conn, pid, scope, &scope_rules.rules, &timestamp)
@@ -365,6 +571,14 @@ pub fn save_settings(
             )
             .map_err(|e| e.to_string())?;
         }
+        Ok(())
+    })();
+    if let Err(error) = db_result {
+        return Err(metadata_failure_after_write(
+            &file,
+            backup_path.as_ref(),
+            error,
+        ));
     }
 
     Ok(SaveResult {
@@ -379,13 +593,56 @@ pub fn list_recent_projects(state: State<Db>) -> Result<Vec<ProjectRecord>, Stri
     db::list_recent_projects(&conn, 20).map_err(|e| e.to_string())
 }
 
+/// Persist (or clear) the profile selected for an existing project.
+#[tauri::command]
+pub fn set_project_profile(
+    state: State<Db>,
+    project_id: String,
+    profile: Option<String>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let updated = db::set_project_profile(&conn, &project_id, profile.as_deref())
+        .map_err(|e| e.to_string())?;
+    if updated {
+        Ok(())
+    } else {
+        Err(format!("unknown project: {project_id}"))
+    }
+}
+
+#[tauri::command]
+pub fn list_sensitive_paths(
+    state: State<Db>,
+    project_id: String,
+) -> Result<Vec<db::SensitivePathRecord>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::list_sensitive_paths(&conn, &project_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_sensitive_path_dismissed(
+    state: State<Db>,
+    project_id: String,
+    id: String,
+    dismissed: bool,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let updated = db::set_sensitive_path_dismissed(&conn, &project_id, &id, dismissed)
+        .map_err(|e| e.to_string())?;
+    if updated {
+        Ok(())
+    } else {
+        Err(format!("unknown sensitive path: {id}"))
+    }
+}
+
 // --- Iteration 2+: Raw JSON, backups, scanner apply, env, gitignore, report ---
 
 /// Read the raw settings text for a scope (empty string if the file doesn't exist).
 #[tauri::command]
 pub fn read_raw_settings(project_root: String, scope: Scope) -> Result<String, String> {
     let file = scope_file(Path::new(&project_root), scope)?;
-    Ok(std::fs::read_to_string(&file).unwrap_or_default())
+    read_optional_text(&file)
 }
 
 /// Save raw settings text after validating it as JSON (never writes invalid JSON).
@@ -406,6 +663,7 @@ pub fn save_raw_settings(
 
     let backups = paths::backups_dir().map_err(|e| e.to_string())?;
     let scope_label = match scope {
+        Scope::Managed => return Err("managed settings are read-only".to_string()),
         Scope::User => "user-settings",
         Scope::Project => "project-settings",
         Scope::Local => "local-settings",
@@ -426,16 +684,25 @@ pub fn save_raw_settings(
         } else {
             Some(project_id.as_str())
         };
-        let conn = state.0.lock().map_err(|e| e.to_string())?;
-        db::record_backup(
-            &conn,
-            proj_id,
-            scope,
-            &file.to_string_lossy(),
-            &bp.to_string_lossy(),
-            &timestamp,
-        )
-        .map_err(|e| e.to_string())?;
+        let db_result = (|| {
+            let conn = state.0.lock().map_err(|e| e.to_string())?;
+            db::record_backup(
+                &conn,
+                proj_id,
+                scope,
+                &file.to_string_lossy(),
+                &bp.to_string_lossy(),
+                &timestamp,
+            )
+            .map_err(|e| e.to_string())
+        })();
+        if let Err(error) = db_result {
+            return Err(metadata_failure_after_write(
+                &file,
+                backup_path.as_ref(),
+                error,
+            ));
+        }
     }
 
     Ok(SaveResult {
@@ -463,28 +730,69 @@ pub fn list_backups(state: State<Db>, project_id: String) -> Result<Vec<db::Back
 }
 
 #[tauri::command]
-pub fn preview_backup(backup_path: String) -> Result<String, String> {
-    std::fs::read_to_string(&backup_path).map_err(|e| e.to_string())
+pub fn preview_backup(state: State<Db>, backup_id: String) -> Result<String, String> {
+    let record = {
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::get_backup(&conn, &backup_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown backup: {backup_id}"))?
+    };
+    let backups = paths::backups_dir().map_err(|e| e.to_string())?;
+    let backup_path = PathBuf::from(&record.backup_path);
+    ensure_path_within(&backup_path, &backups, "backup")?;
+    std::fs::read_to_string(&backup_path)
+        .map_err(|error| format!("failed to read backup {}: {error}", backup_path.display()))
 }
 
 /// Restore a backup onto its original path (backs up current state first).
 #[tauri::command]
 pub fn restore_backup(
-    backup_path: String,
-    target_path: String,
+    state: State<Db>,
+    backup_id: String,
     timestamp: String,
 ) -> Result<(), String> {
-    let target = PathBuf::from(&target_path);
+    let record = {
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::get_backup(&conn, &backup_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown backup: {backup_id}"))?
+    };
+    let target = PathBuf::from(&record.original_path);
     let backups = paths::backups_dir().map_err(|e| e.to_string())?;
+    let backup_path = PathBuf::from(&record.backup_path);
+    ensure_path_within(&backup_path, &backups, "backup")?;
     let name = format!("{timestamp}_pre-restore.json");
-    backup::backup(&target, &backups, &name).map_err(|e| e.to_string())?;
-    backup::restore(Path::new(&backup_path), &target).map_err(|e| e.to_string())
+    let pre_restore = backup::backup(&target, &backups, &name).map_err(|e| e.to_string())?;
+    if let Some(pre_restore) = &pre_restore {
+        let scope: Scope = serde_json::from_value(serde_json::Value::String(record.scope.clone()))
+            .map_err(|error| format!("invalid backup scope in database: {error}"))?;
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::record_backup(
+            &conn,
+            record.project_id.as_deref(),
+            scope,
+            &record.original_path,
+            &pre_restore.to_string_lossy(),
+            &timestamp,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    backup::restore(&backup_path, &target).map_err(|e| e.to_string())
 }
 
 /// Turn scanner recommendations into neutral rules (Deny for sensitive, Allow for source).
 #[tauri::command]
-pub fn scan_recommendation_rules(project_root: String) -> Result<Vec<PolicyRule>, String> {
-    let scan = fs_scan::scan(Path::new(&project_root)).map_err(|e| e.to_string())?;
+pub fn scan_recommendation_rules(
+    state: State<Db>,
+    project_root: String,
+) -> Result<Vec<PolicyRule>, String> {
+    let mut scan = fs_scan::scan(Path::new(&project_root)).map_err(|e| e.to_string())?;
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(project) =
+        db::get_project_by_path(&conn, &project_root).map_err(|e| e.to_string())?
+    {
+        sync_sensitive_paths(&mut conn, &project.id, &mut scan)?;
+    }
     Ok(agentguard_core::profiles::baseline_rules(
         agentguard_core::profiles::Profile::Conservative,
         &scan,
@@ -493,14 +801,25 @@ pub fn scan_recommendation_rules(project_root: String) -> Result<Vec<PolicyRule>
 
 /// Baseline rules for a named profile (applied after user confirms in the Diff).
 #[tauri::command]
-pub fn apply_profile(project_root: String, profile: String) -> Result<ProfilePlan, String> {
-    let scan = fs_scan::scan(Path::new(&project_root)).map_err(|e| e.to_string())?;
+pub fn apply_profile(
+    state: State<Db>,
+    project_root: String,
+    profile: String,
+) -> Result<ProfilePlan, String> {
+    let mut scan = fs_scan::scan(Path::new(&project_root)).map_err(|e| e.to_string())?;
     let p = match profile.as_str() {
         "conservative" => agentguard_core::profiles::Profile::Conservative,
         "balanced" => agentguard_core::profiles::Profile::Balanced,
         "fast-dev" => agentguard_core::profiles::Profile::FastDev,
         _ => agentguard_core::profiles::Profile::Custom,
     };
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(project) =
+        db::get_project_by_path(&conn, &project_root).map_err(|e| e.to_string())?
+    {
+        sync_sensitive_paths(&mut conn, &project.id, &mut scan)?;
+        db::set_project_profile(&conn, &project.id, Some(&profile)).map_err(|e| e.to_string())?;
+    }
     Ok(ProfilePlan {
         rules: agentguard_core::profiles::baseline_rules(p, &scan),
     })
@@ -591,6 +910,9 @@ pub struct PolicyTemplate {
 
 #[tauri::command]
 pub fn export_template(scoped: ScopedRulesDto) -> Result<String, String> {
+    let mut scoped = scoped;
+    // Managed policy belongs to the administrator and is never portable.
+    scoped.managed = ScopeRules::default();
     let tmpl = PolicyTemplate { version: 1, scoped };
     serde_json::to_string_pretty(&tmpl).map_err(|e| e.to_string())
 }
@@ -599,19 +921,98 @@ pub fn export_template(scoped: ScopedRulesDto) -> Result<String, String> {
 pub fn import_template(text: String) -> Result<ScopedRulesDto, String> {
     let tmpl: PolicyTemplate =
         serde_json::from_str(&text).map_err(|e| format!("invalid template: {e}"))?;
-    Ok(tmpl.scoped)
+    if tmpl.version != 1 {
+        return Err(format!(
+            "unsupported policy template version: {}",
+            tmpl.version
+        ));
+    }
+    let mut scoped = tmpl.scoped;
+    scoped.managed = ScopeRules::default();
+    Ok(scoped)
 }
 
-/// Write UTF-8 text to a user-chosen path (used by template/report export).
-#[tauri::command]
-pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedTextFile {
+    pub path: String,
+    pub text: String,
 }
 
-/// Read UTF-8 text from a user-chosen path (used by template import).
+/// Pick and read a policy template in the trusted Rust layer. The webview never
+/// receives an arbitrary-read primitive.
 #[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+pub async fn pick_policy_template(
+    app: tauri::AppHandle,
+) -> Result<Option<SelectedTextFile>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("JSON", &["json"])
+        .set_title("Agent Guard 정책 템플릿 가져오기")
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| error.to_string())?;
+    let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+    if metadata.len() > 2 * 1024 * 1024 {
+        return Err("policy template is larger than 2 MiB".to_string());
+    }
+    let text = read_optional_text(&path)?;
+    Ok(Some(SelectedTextFile {
+        path: path.to_string_lossy().to_string(),
+        text,
+    }))
+}
+
+fn safe_default_name(name: &str, fallback: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches('.');
+    if cleaned.is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// Save an export only to the path returned by the native dialog owned by this
+/// command. Supported kinds deliberately limit extensions and default names.
+#[tauri::command]
+pub async fn save_export_file(
+    app: tauri::AppHandle,
+    kind: String,
+    default_name: String,
+    contents: String,
+) -> Result<Option<String>, String> {
+    let (label, extension, suffix) = match kind.as_str() {
+        "policy-template" => ("JSON", "json", "agentguard-template.json"),
+        "policy-report" => ("Markdown", "md", "policy-report.md"),
+        _ => return Err(format!("unsupported export kind: {kind}")),
+    };
+    let base = safe_default_name(&default_name, "agentguard");
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter(label, &[extension])
+        .set_file_name(format!("{base}-{suffix}"))
+        .set_title("Agent Guard 파일 저장")
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| error.to_string())?;
+    backup::atomic_write(&path, &contents).map_err(|error| error.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 // --- Multi-agent global settings hub -----------------------------------------
@@ -727,8 +1128,11 @@ pub fn get_agent_global(id: String) -> Result<AgentGlobal, String> {
 
 /// Read an agent config file's raw text (empty string if it doesn't exist).
 #[tauri::command]
-pub fn read_agent_config(path: String) -> Result<String, String> {
-    Ok(std::fs::read_to_string(&path).unwrap_or_default())
+pub fn read_agent_config(agent_id: String) -> Result<String, String> {
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let agent =
+        resolve_agent(&home, &agent_id).ok_or_else(|| format!("unknown agent: {agent_id}"))?;
+    read_optional_text(Path::new(&agent.path))
 }
 
 fn validate_config_text(text: &str, format: &str) -> Result<(), String> {
@@ -756,16 +1160,21 @@ pub fn validate_config(text: String, format: String) -> Result<Option<String>, S
 /// Backs up the existing file first (req §8.10, §9.4).
 #[tauri::command]
 pub fn save_agent_config(
-    path: String,
     text: String,
-    format: String,
     agent_id: String,
     timestamp: String,
 ) -> Result<SaveResult, String> {
-    validate_config_text(&text, &format)?;
-    let file = PathBuf::from(&path);
+    let home = paths::home_dir().map_err(|e| e.to_string())?;
+    let agent =
+        resolve_agent(&home, &agent_id).ok_or_else(|| format!("unknown agent: {agent_id}"))?;
+    validate_config_text(&text, &agent.format)?;
+    let file = PathBuf::from(&agent.path);
     let backups = paths::backups_dir().map_err(|e| e.to_string())?;
-    let ext = if format == "toml" { "toml" } else { "json" };
+    let ext = if agent.format == "toml" {
+        "toml"
+    } else {
+        "json"
+    };
     let name = format!("{timestamp}_{agent_id}-global.{ext}");
     let backup_path = backup::backup(&file, &backups, &name).map_err(|e| e.to_string())?;
     backup::atomic_write(&file, &text).map_err(|e| e.to_string())?;
@@ -1433,6 +1842,12 @@ pub fn simulate_access(
         "command" => {
             let root = PathBuf::from(&project_root);
             let mut perms = Vec::new();
+            let program_files = std::env::var_os("ProgramFiles")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+            if let Some(loaded) = settings::load_file_managed_settings(&program_files) {
+                perms.push((Scope::Managed, loaded.permissions));
+            }
             for scope in [Scope::User, Scope::Project, Scope::Local] {
                 let file = scope_file(&root, scope)?;
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
@@ -1464,6 +1879,7 @@ pub struct AgentSurface {
 fn agent_surface(root: &Path, home: &Path) -> AgentSurface {
     let sp = settings::scope_paths(root, home);
     let mut hooks = Vec::new();
+    let mut settings_values = Vec::new();
     for (scope, file) in [
         (Scope::User, &sp.user),
         (Scope::Project, &sp.project),
@@ -1472,7 +1888,13 @@ fn agent_surface(root: &Path, home: &Path) -> AgentSurface {
         let text = std::fs::read_to_string(file).unwrap_or_default();
         if let Ok(loaded) = settings::parse(scope, &text) {
             hooks.extend(inspect::hooks_from_settings(scope, &loaded.raw));
+            settings_values.push(loaded.raw);
         }
+    }
+
+    if let Some(loaded) = settings::load_file_managed_settings(&program_files_dir()) {
+        hooks.extend(inspect::hooks_from_settings(Scope::Managed, &loaded.raw));
+        settings_values.push(loaded.raw);
     }
 
     let mut mcp_servers = Vec::new();
@@ -1485,6 +1907,8 @@ fn agent_surface(root: &Path, home: &Path) -> AgentSurface {
             &text,
         ));
     }
+    let approval = inspect::project_mcp_approval(&settings_values.iter().collect::<Vec<_>>());
+    inspect::apply_project_mcp_approval(&mut mcp_servers, &approval);
 
     AgentSurface { hooks, mcp_servers }
 }
@@ -1575,6 +1999,87 @@ pub fn unwatch_project(state: State<WatchState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_metadata_is_restored_only_to_matching_scope_path_and_policy() {
+        let mut dto = ScopedRulesDto {
+            project: ScopeRules {
+                rules: vec![
+                    PolicyRule::new("src", Policy::Allow, AppliesTo::FolderAndChildren),
+                    PolicyRule::new("secret", Policy::Deny, AppliesTo::FolderAndChildren),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut saved = PolicyRule::new("src", Policy::Allow, AppliesTo::FolderAndChildren);
+        saved.tools = Some(vec![agentguard_core::Tool::Read]);
+        saved.reason = Some("source code".into());
+        saved.risk_level = Some(RiskLevel::Low);
+        saved.notes = Some("reviewed".into());
+        // Same path but a stale policy must not annotate the external deny rule.
+        let mut stale = PolicyRule::new("secret", Policy::Allow, AppliesTo::FolderAndChildren);
+        stale.notes = Some("must not leak".into());
+
+        merge_stored_rule_metadata(
+            &mut dto,
+            vec![
+                db::ScopedRuleRow {
+                    scope: Scope::Project,
+                    rule: saved,
+                },
+                db::ScopedRuleRow {
+                    scope: Scope::Project,
+                    rule: stale,
+                },
+            ],
+        );
+
+        let src = &dto.project.rules[0];
+        assert_eq!(src.tools, Some(vec![agentguard_core::Tool::Read]));
+        assert_eq!(src.reason.as_deref(), Some("source code"));
+        assert_eq!(src.risk_level, Some(RiskLevel::Low));
+        assert_eq!(src.notes.as_deref(), Some("reviewed"));
+        assert_eq!(dto.project.rules[1].notes, None);
+    }
+
+    #[test]
+    fn managed_scope_has_no_writable_settings_path() {
+        assert_eq!(
+            scope_file(Path::new("."), Scope::Managed).unwrap_err(),
+            "managed settings are read-only"
+        );
+    }
+
+    #[test]
+    fn managed_only_switch_excludes_lower_scope_rules_from_effective_policy() {
+        let dto = ScopedRulesDto {
+            managed: ScopeRules {
+                rules: vec![PolicyRule::new(
+                    "managed",
+                    Policy::Deny,
+                    AppliesTo::FolderAndChildren,
+                )],
+                enforce_managed_only: true,
+                ..Default::default()
+            },
+            user: ScopeRules {
+                rules: vec![PolicyRule::new(
+                    "user",
+                    Policy::Allow,
+                    AppliesTo::FolderAndChildren,
+                )],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let core = dto.to_core();
+        assert_eq!(core.managed.len(), 1);
+        assert!(core.user.is_empty());
+        assert!(core.project.is_empty());
+        assert!(core.local.is_empty());
+    }
 
     #[test]
     fn web_block_covers_windows_and_bash_http_clients() {

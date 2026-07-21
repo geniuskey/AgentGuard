@@ -9,6 +9,10 @@
 - 앱 형태: Tauri 기반 경량 데스크톱 실행 파일
 - 실행 파일 예: `AgentGuard.exe`
 
+> 이 문서는 원본 제품 요구사항을 보존한다. 항목이 적혀 있다는 사실은 구현 완료를 뜻하지
+> 않는다. 실제 상태와 출시 blocker는 [roadmap.md](roadmap.md)를 따른다. 특히 Raw JSON은
+> 현재 textarea 기반이며 이 문서의 Monaco/syntax highlighting 요구는 아직 충족되지 않았다.
+
 ---
 
 ## 1. 배경

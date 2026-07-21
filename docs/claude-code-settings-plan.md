@@ -71,6 +71,8 @@ Claude Code의 설정 표면은 그보다 훨씬 넓다:
 - Hooks 편집: 템플릿 카탈로그("저장 후 포맷", "커밋 전 테스트", "민감 명령 차단") →
   매개변수 폼 → 검토 화면(빨강 강조: "이 명령이 자동 실행됩니다") → Diff → 저장.
 - managed 스코프(읽기 전용 4번째 스코프)를 `effective.rs` 병합에 반영.
+  **2026-07-22 구현:** Windows file tier(`managed-settings.json` + 정렬된
+  `managed-settings.d/*.json`)를 로드한다. server/MDM/registry 정책 탐지는 후속 범위다.
 
 ### Phase 3 — 컨텍스트·확장 기능
 
@@ -82,26 +84,27 @@ Claude Code의 설정 표면은 그보다 훨씬 넓다:
 
 Phase 배정과 무관하게, 발견된 문제를 빠짐없이 기록한다. 완료 시 체크.
 
-- [ ] **managed 스코프 미반영**: Effective Preview가 관리형 설정(`C:\Program Files\ClaudeCode\`)
-  을 모른 채 3-scope만 병합 → 병합 결과가 실제와 다를 수 있음. (Phase 2)
+- [x] **managed 파일 스코프**: Windows `C:\Program Files\ClaudeCode\`의 기본 파일과
+  drop-in을 읽기 전용 최상위 tier로 Effective Preview/시뮬레이션에 반영. 단
+  server/MDM/registry 정책은 로컬 파일 loader로 추론하지 않음. (2026-07-22)
 - [x] **defaultMode 신규 enum**: 2026-07-16 별도 PR(#2, 093bbea)에서 `defaultMode` 개념
   자체를 제거함 — RuleListEditor에 선택지가 없고, 규칙 저장(`settings::render`) 시 파일에
   남은 값도 항상 지운다. `auto`/`delegate` 반영 여부는 더 이상 해당 없음.
-- [ ] **defaultMode 잔존 값의 비일관 처리(신규)**: 규칙 편집기 저장(`render`)은 `permissions.
-  defaultMode`를 항상 제거하지만, 일반 설정/Raw JSON 저장(`config_set_value`)은 그대로 둔다 —
-  사용자가 Raw로 넣은 값이 "접근 권한" 탭 저장 시 예고 없이 사라질 수 있음. `settings_lint`가
-  이 값을 발견하면 "AgentGuard가 관리하지 않으며 규칙 저장 시 제거됨"을 안내하도록 개선.
-- [ ] **hooks 이벤트 목록 확장**: `inspect.rs`는 이벤트명을 그대로 표시하므로 동작은 하지만,
-  새 이벤트(SessionEnd, UserPromptSubmit, PermissionRequest, SubagentStop 등)와
-  command 외 핸들러 타입(prompt 등)의 위험도 분류가 없음. (Phase 2)
-- [ ] **MCP 승인 키 미반영**: `enableAllProjectMcpServers` / `enabled/disabledMcpjsonServers`
-  가 리스크 계산·MCP 목록 표시에 반영되지 않음 — "정의됐지만 비활성"인 서버를 활성처럼 표시. (Phase 2)
+- [x] **defaultMode 잔존 값 안내**: 규칙 편집기 저장(`render`)은 `permissions.defaultMode`를
+  제거하지만 일반 설정/Raw 저장은 보존한다. `settings_lint`가 값을 발견하면 Agent Guard 관리
+  대상이 아니며 접근 권한 규칙 저장 시 제거된다는 info를 표시한다. (2026-07-22)
+- [x] **hooks handler 가시화**: 이벤트 이름은 새 값을 포함해 그대로 표시하고
+  command/prompt/agent/http/mcp handler의 실행 대상·웹 사용·위험도를 분류한다. 이벤트별 의미를
+  모두 모델링한 것은 아니므로 위험도는 보수적 heuristic이다. (2026-07-22)
+- [x] **MCP 승인 키 반영**: `enableAllProjectMcpServers` / `enabled/disabledMcpjsonServers`
+  를 병합해 project MCP의 활성/승인 대기/명시적 비활성 상태를 표시한다. (2026-07-22)
 - [ ] **hooks/MCP 편집 불가**: 읽기 전용 → 템플릿 기반 편집기. (Phase 2)
 - [ ] **CLAUDE.md / rules/ 미지원**: 계층 뷰·편집·`@import`·paths 스코핑. (Phase 3)
 - [ ] **agents/skills 가시화 없음**: 스킬·서브에이전트는 임의 지침 주입/도구 사용 표면인데
   리스크 스캔 대상이 아님. (Phase 3)
-- [ ] **스키마 드리프트 관리**: 공식 JSON Schema를 번들하고 Raw 검증을 완전 스키마 검증으로
-  격상 (`settings_lint`는 임시 방편). statusLine/spinnerTips/attribution 이력 참고.
+- [x] **오프라인 스키마 검증**: 2026-07-22 official SchemaStore snapshot을 core asset으로
+  번들하고 `settings_lint`에서 전체 schema + 호환성 경고를 함께 실행. 네트워크 없이 동작한다.
+  새 Claude Code release 전 snapshot 갱신·회귀 검증은 계속 필요한 운영 작업이다.
 - [ ] **includeCoAuthoredBy deprecated**: `attribution` 객체 지원 후 폼 항목 교체.
 - [ ] **프로젝트/로컬 스코프 일반 설정**: ClaudeSettingsPanel은 현재 user 고정 —
   project/local 스코프 파라미터화해 `/project` 화면에도 노출.

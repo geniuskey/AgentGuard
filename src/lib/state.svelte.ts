@@ -13,9 +13,10 @@ import {
 
 function emptyScoped(): ScopedRulesDto {
   return {
-    user: { rules: [], extraDeny: [] },
-    project: { rules: [], extraDeny: [] },
-    local: { rules: [], extraDeny: [] }
+    managed: { rules: [], extraDeny: [], enforceManagedOnly: false },
+    user: { rules: [], extraDeny: [], enforceManagedOnly: false },
+    project: { rules: [], extraDeny: [], enforceManagedOnly: false },
+    local: { rules: [], extraDeny: [], enforceManagedOnly: false }
   };
 }
 

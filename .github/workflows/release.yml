@@ -70,6 +70,7 @@ jobs:
             - `-setup.exe`: recommended Windows installer (NSIS)
             - `.msi`: Windows Installer package
             - `-portable.exe`: unsigned standalone executable; WebView2 Runtime is required
+            - `SHA256SUMS.txt`: checksums for all Windows binaries in this release
 
             These binaries are not code-signed yet, so Windows SmartScreen may show a warning.
           releaseDraft: false
@@ -77,6 +78,18 @@ jobs:
           generateReleaseNotes: true
           uploadUpdaterJson: false
           releaseAssetNamePattern: AgentGuard-v[version]-windows-[arch][setup][ext]
+
+      - name: Smoke test portable executable
+        shell: pwsh
+        run: |
+          $portable = Join-Path $env:RUNNER_TEMP "AgentGuard-v$env:APP_VERSION-windows-x64-portable.exe"
+          $process = Start-Process -FilePath $portable -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) {
+            throw "Portable app exited during startup with code $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id
+          Wait-Process -Id $process.Id -ErrorAction SilentlyContinue
 
       - name: Attach portable executable
         shell: pwsh
@@ -88,3 +101,25 @@ jobs:
             throw "Portable executable not found: $portable"
           }
           gh release upload "v$env:APP_VERSION" $portable --clobber
+
+      - name: Publish SHA-256 checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP 'release-assets'
+          New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
+          gh release download "v$env:APP_VERSION" --dir $assetDir --pattern '*.exe' --pattern '*.msi'
+          $binaries = Get-ChildItem -LiteralPath $assetDir -File |
+            Where-Object { $_.Extension -in '.exe', '.msi' } |
+            Sort-Object Name
+          if ($binaries.Count -lt 3) {
+            throw "Expected NSIS, MSI, and portable assets; found $($binaries.Count)"
+          }
+          $checksumFile = Join-Path $env:RUNNER_TEMP 'SHA256SUMS.txt'
+          $lines = $binaries | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          Set-Content -LiteralPath $checksumFile -Value $lines -Encoding utf8NoBOM
+          gh release upload "v$env:APP_VERSION" $checksumFile --clobber

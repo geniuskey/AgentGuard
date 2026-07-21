@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Neutral rules grouped by scope.
 #[derive(Debug, Default, Clone)]
 pub struct ScopedRules {
+    pub managed: Vec<PolicyRule>,
     pub user: Vec<PolicyRule>,
     pub project: Vec<PolicyRule>,
     pub local: Vec<PolicyRule>,
@@ -20,6 +21,7 @@ pub struct ScopedRules {
 impl ScopedRules {
     fn tagged(&self) -> Vec<(Scope, &PolicyRule)> {
         let mut v = Vec::new();
+        v.extend(self.managed.iter().map(|r| (Scope::Managed, r)));
         v.extend(self.user.iter().map(|r| (Scope::User, r)));
         v.extend(self.project.iter().map(|r| (Scope::Project, r)));
         v.extend(self.local.iter().map(|r| (Scope::Local, r)));
@@ -74,7 +76,7 @@ pub(crate) fn fallback() -> Policy {
     Policy::Ask
 }
 
-/// Every rule (with its scope) matching `target_path`, in Local > Project > User
+/// Every rule (with its scope) matching `target_path`, in Managed > Local > Project > User
 /// order. Used by the simulator to show *why* a path got its decision.
 pub fn matching_rules(rules: &ScopedRules, target_path: &str) -> Vec<(Scope, PolicyRule)> {
     let target = norm(target_path);
@@ -86,9 +88,10 @@ pub fn matching_rules(rules: &ScopedRules, target_path: &str) -> Vec<(Scope, Pol
         .collect();
     fn scope_rank(s: Scope) -> u8 {
         match s {
-            Scope::Local => 0,
-            Scope::Project => 1,
-            Scope::User => 2,
+            Scope::Managed => 0,
+            Scope::Local => 1,
+            Scope::Project => 2,
+            Scope::User => 3,
         }
     }
     matched.sort_by_key(|(s, _)| scope_rank(*s));
@@ -115,12 +118,13 @@ pub fn compute_for(rules: &ScopedRules, target_path: &str) -> EffectivePolicy {
         };
     }
 
-    // Local > Project > User for source attribution within the same policy.
+    // Managed > Local > Project > User for source attribution within the same policy.
     fn scope_rank(s: Scope) -> u8 {
         match s {
-            Scope::Local => 0,
-            Scope::Project => 1,
-            Scope::User => 2,
+            Scope::Managed => 0,
+            Scope::Local => 1,
+            Scope::Project => 2,
+            Scope::User => 3,
         }
     }
     matched.sort_by_key(|(s, _)| scope_rank(*s));
@@ -266,5 +270,26 @@ mod tests {
         };
         let all = compute_all(&rules);
         assert_eq!(all.len(), 1);
+    }
+
+    #[test]
+    fn managed_is_highest_source_authority_but_global_deny_still_wins() {
+        let rules = ScopedRules {
+            managed: vec![rule("src", Policy::Allow, AppliesTo::FolderAndChildren)],
+            local: vec![
+                rule("src", Policy::Allow, AppliesTo::FolderAndChildren),
+                rule("src/private", Policy::Deny, AppliesTo::FolderAndChildren),
+            ],
+            ..Default::default()
+        };
+
+        let allowed = compute_for(&rules, "src/app.rs");
+        assert_eq!(allowed.effective, Policy::Allow);
+        assert_eq!(allowed.source_scope, Some(Scope::Managed));
+
+        let denied = compute_for(&rules, "src/private/key.txt");
+        assert_eq!(denied.effective, Policy::Deny);
+        assert_eq!(denied.source_scope, Some(Scope::Local));
+        assert!(denied.conflict);
     }
 }

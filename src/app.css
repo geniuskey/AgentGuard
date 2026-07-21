@@ -179,6 +179,7 @@ select {
   animation: ag-fade-in 130ms ease-out;
 }
 .modal {
+  box-sizing: border-box;
   background: var(--bg-1);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
@@ -197,6 +198,7 @@ select {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1rem;
 }
@@ -224,6 +226,17 @@ select {
 .modal-actions .primary:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+@media (max-width: 700px) {
+  .modal-bg {
+    padding: 0.65rem;
+  }
+  .modal {
+    width: 100%;
+    max-height: calc(100dvh - 1.3rem);
+    padding: 0.9rem;
+  }
 }
 
 /* Tooltip element created by the `use:tooltip` action (src/lib/tooltip.ts). */

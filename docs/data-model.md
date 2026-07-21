@@ -10,7 +10,7 @@
 ```
 %APPDATA%\AgentGuard\
 ├─ app.db              # SQLite: 프로젝트·정책 메타데이터·백업 인덱스
-├─ app-config.json     # 앱 전역 설정 + 최근 프로젝트 빠른 캐시
+├─ app-config.json     # 예약된 앱 전역 설정 경로(현재 생성/사용하지 않음)
 └─ backups\            # 실제 백업 파일들
 ```
 
@@ -80,28 +80,11 @@ CREATE TABLE known_sensitive_paths (
 
 ---
 
-## 3. app-config.json
+## 3. app-config.json (예약)
 
-```jsonc
-{
-  "version": 1,
-  "theme": "system",                 // Could-have: dark mode
-  "excludeGlobs": ["node_modules", ".git", ".venv", "dist", "build"],
-  "backupBeforeSave": true,          // 기본 활성 (요구사항서 8.9)
-  "recentProjects": [                // Home 빠른 표시용 캐시 (원본은 DB)
-    {
-      "projectPath": "D:\\work\\pixel-tools",
-      "projectName": "pixel-tools",
-      "lastOpenedAt": "2026-07-09T17:30:00+09:00",
-      "riskProfile": "Conservative",
-      "riskLevel": "High"
-    }
-  ]
-}
-```
-> 요구사항서 8.11의 JSON 예시(knownSensitivePaths/allowedPaths/notes)는 정규 저장소인
-> SQLite(`project_paths`, `known_sensitive_paths`, `projects.notes`)에 매핑된다.
-> app-config는 앱 시작 시 Home을 빠르게 그리기 위한 캐시다.
+코드에는 향후 전역 앱 설정을 위한 경로 helper가 있지만 현재 파일을 생성하거나 읽는 기능은
+없다. 최근 프로젝트, 프로필, known sensitive path, 정책 메타데이터의 유일한 앱 저장소는
+SQLite다. 구현되지 않은 캐시를 운영 데이터로 간주해서는 안 된다.
 
 ---
 
@@ -109,7 +92,8 @@ CREATE TABLE known_sensitive_paths (
 
 경로: `%APPDATA%\AgentGuard\backups\`
 
-파일명: `{yyyy-MM-dd}_{HHmmss}_{project}_{scope}.json`
+기본 파일명: `{yyyy-MM-dd}_{HHmmss}_{project}_{scope}.json`. 같은 초·이름에 충돌하면 기존
+백업을 덮어쓰지 않고 stem 뒤에 UUID를 붙인다.
 ```
 2026-07-09_173000_my-project_project-settings.json
 2026-07-09_173000_my-project_local-settings.json

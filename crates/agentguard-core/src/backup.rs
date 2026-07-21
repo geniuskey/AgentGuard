@@ -3,7 +3,28 @@
 //! The timestamp is supplied by the caller (the Tauri layer) so this module stays
 //! clock-independent and deterministically testable.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{File, OpenOptions},
+    io,
+    path::{Path, PathBuf},
+};
+
+fn validate_filename(filename: &str) -> crate::Result<()> {
+    let path = Path::new(filename);
+    if filename.is_empty()
+        || path.file_name().is_none()
+        || path.file_name() != Some(filename.as_ref())
+        || path.components().count() != 1
+        || filename.chars().any(|ch| {
+            ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+    {
+        return Err(crate::Error::Other(
+            "backup filename must be a single safe path component".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// Build a backup filename: `{yyyy-MM-dd}_{HHmmss}_{project}_{scope}.json`.
 /// `project` is omitted for the user scope.
@@ -21,13 +42,46 @@ pub fn backup(
     backups_dir: &Path,
     filename: &str,
 ) -> crate::Result<Option<PathBuf>> {
-    if !original.exists() {
-        return Ok(None);
-    }
+    let mut source = match File::open(original) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    validate_filename(filename)?;
     std::fs::create_dir_all(backups_dir)?;
-    let dest = backups_dir.join(filename);
-    std::fs::copy(original, &dest)?;
-    Ok(Some(dest))
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("backup");
+    let extension = path.extension().and_then(|s| s.to_str());
+    let mut first_attempt = true;
+
+    loop {
+        let candidate_name = if first_attempt {
+            first_attempt = false;
+            filename.to_string()
+        } else {
+            let suffix = uuid::Uuid::new_v4();
+            match extension {
+                Some(ext) => format!("{stem}_{suffix}.{ext}"),
+                None => format!("{stem}_{suffix}"),
+            }
+        };
+        let dest = backups_dir.join(candidate_name);
+        let mut destination = match OpenOptions::new().write(true).create_new(true).open(&dest) {
+            Ok(destination) => destination,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        if let Err(error) = io::copy(&mut source, &mut destination) {
+            drop(destination);
+            let _ = std::fs::remove_file(&dest);
+            return Err(error.into());
+        }
+        return Ok(Some(dest));
+    }
 }
 
 /// Atomically write `contents` to `target` (temp file in the same dir, then rename),
@@ -98,5 +152,46 @@ mod tests {
         let root = tmp();
         let res = backup(&root.join("nope.json"), &root.join("backups"), "x.json").unwrap();
         assert!(res.is_none());
+    }
+
+    #[test]
+    fn repeated_backup_never_overwrites_existing_copy() {
+        let root = tmp();
+        let original = root.join("settings.json");
+        atomic_write(&original, "{\"version\":1}\n").unwrap();
+        let backups = root.join("backups");
+
+        let first = backup(&original, &backups, "same.json").unwrap().unwrap();
+        atomic_write(&original, "{\"version\":2}\n").unwrap();
+        let second = backup(&original, &backups, "same.json").unwrap().unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(fs::read_to_string(first).unwrap(), "{\"version\":1}\n");
+        assert_eq!(fs::read_to_string(second).unwrap(), "{\"version\":2}\n");
+    }
+
+    #[test]
+    fn backup_rejects_path_traversal_filename() {
+        let root = tmp();
+        let original = root.join("settings.json");
+        atomic_write(&original, "{}\n").unwrap();
+
+        let err = backup(&original, &root.join("backups"), "../escaped.json")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("single safe path component"));
+        assert!(!root.join("escaped.json").exists());
+    }
+
+    #[test]
+    fn backup_rejects_windows_alternate_data_stream_filename() {
+        let root = tmp();
+        let original = root.join("settings.json");
+        atomic_write(&original, "{}\n").unwrap();
+
+        let err = backup(&original, &root.join("backups"), "settings.json:payload")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("single safe path component"));
     }
 }

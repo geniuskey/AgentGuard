@@ -73,6 +73,7 @@ Applies to · Reason · Risk level · Notes · [Clear rule] · [Apply] · [Previ
 - 정책 옵션: Allow / Ask / Deny / Inherit / Clear explicit rule.
 - 적용 범위: This file only / This folder only / This folder and children / Matching pattern / Tool-specific rule.
 - Source Scope: User / Project / Local (선택에 따라 저장 파일 결정).
+- Managed file scope는 Effective Preview에서만 읽기 전용으로 표시하며 편집 대상이 아니다.
 - Apply는 즉시 파일을 쓰지 않고 **미저장 변경(dirty)**으로 반영 → Preview/Diff 후 Save.
 
 ---
@@ -88,7 +89,9 @@ Applies to · Reason · Risk level · Notes · [Clear rule] · [Apply] · [Previ
 
 - 탭: User / Project / Local settings.
 - 기능: Validate · Format · Diff · Save · Restore · Open in external editor.
-- syntax highlight + JSON/스키마 검증. 잘못된 JSON은 저장 불가.
+- 현재 구현: 네이티브 textarea + JSON 구문 검증·포맷·저장. 잘못된 JSON은 저장 불가.
+- syntax highlighting/Monaco는 아직 구현되지 않았다. Claude 설정 의미 검증은 별도의
+  lint/번들 스키마 계층으로 제공하며 에디터 자체의 highlighting과 구분한다.
 - GUI↔Raw 양방향 반영(요구사항서 8.8 수용 기준).
 
 ---

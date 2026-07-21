@@ -298,12 +298,14 @@
   .toolbar {
     display: flex;
     gap: 0.9rem;
+    overflow-x: auto;
     padding: 0.35rem 0.6rem;
     background: var(--bg-1);
     border-bottom: 1px solid var(--border);
   }
   .tg {
     display: inline-flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 0.35rem;
     font-size: 0.72rem;
@@ -316,6 +318,7 @@
   }
   .legend {
     display: inline-flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 0.3rem;
     margin-left: auto;

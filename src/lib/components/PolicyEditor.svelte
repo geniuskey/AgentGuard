@@ -1,8 +1,21 @@
 <script lang="ts">
-  import { inTauri, noteIgnoredPath, pathIgnored, type AppliesTo, type Policy, type ScopeName } from '$lib/ipc';
-  import { app, clearPolicy, refreshEffective, setPolicy } from '$lib/state.svelte';
+  import {
+    inTauri,
+    noteIgnoredPath,
+    pathIgnored,
+    type AppliesTo,
+    type Policy,
+    type ScopeName
+  } from '$lib/ipc';
+  import { app, clearPolicy, refreshEffective, upsertRule } from '$lib/state.svelte';
+  import { buildPolicyRule } from '$lib/policy-rule';
 
   let appliesTo = $state<AppliesTo>('folder-and-children');
+  let reason = $state('');
+  let notes = $state('');
+  let riskLevel = $state<'' | 'low' | 'medium' | 'high'>('');
+  let useRead = $state(true);
+  let useEdit = $state(true);
 
   const target = $derived(app.selectedPath || '(project root)');
 
@@ -37,9 +50,31 @@
     app.scoped[app.activeScope].rules.find((r) => r.path === app.selectedPath)
   );
 
+  $effect(() => {
+    const rule = current;
+    appliesTo = rule?.appliesTo ?? 'folder-and-children';
+    reason = rule?.reason ?? '';
+    notes = rule?.notes ?? '';
+    riskLevel = rule?.riskLevel ?? '';
+    const tools = rule?.tools;
+    useRead = !tools || tools.includes('Read');
+    useEdit = !tools || tools.includes('Edit');
+  });
+
   async function apply(policy: Policy) {
-    if (!app.selectedPath) return;
-    setPolicy(app.selectedPath, policy, appliesTo);
+    if (!app.selectedPath || (!useRead && !useEdit)) return;
+    const rule = buildPolicyRule({
+      path: app.selectedPath,
+      policy,
+      appliesTo,
+      useRead,
+      useEdit,
+      reason,
+      riskLevel,
+      notes
+    });
+    if (!rule) return;
+    upsertRule(app.activeScope, rule);
     await refreshEffective();
   }
 
@@ -79,6 +114,33 @@
     </select>
   </label>
 
+  <fieldset class="field tools-field" disabled={!app.selectedPath}>
+    <legend>적용 도구</legend>
+    <label><input type="checkbox" bind:checked={useRead} /> Read</label>
+    <label><input type="checkbox" bind:checked={useEdit} /> Edit</label>
+    {#if !useRead && !useEdit}<small>도구를 하나 이상 선택하세요.</small>{/if}
+  </fieldset>
+
+  <label class="field">
+    <span>사유</span>
+    <input bind:value={reason} disabled={!app.selectedPath} placeholder="예: 소스 코드 작업에 필요" />
+  </label>
+
+  <label class="field">
+    <span>위험도</span>
+    <select bind:value={riskLevel} disabled={!app.selectedPath}>
+      <option value="">지정 안 함</option>
+      <option value="low">낮음</option>
+      <option value="medium">중간</option>
+      <option value="high">높음</option>
+    </select>
+  </label>
+
+  <label class="field">
+    <span>메모</span>
+    <textarea bind:value={notes} disabled={!app.selectedPath} rows="2" placeholder="팀 또는 개인 참고 사항"></textarea>
+  </label>
+
   <div class="field">
     <span>Current (this scope)</span>
     {#if current}
@@ -89,13 +151,13 @@
   </div>
 
   <div class="buttons">
-    <button class="allow" onclick={() => apply('allow')} disabled={!app.selectedPath}>
+    <button class="allow" onclick={() => apply('allow')} disabled={!app.selectedPath || (!useRead && !useEdit)}>
       Allow <kbd>A</kbd>
     </button>
-    <button class="ask" onclick={() => apply('ask')} disabled={!app.selectedPath}>
+    <button class="ask" onclick={() => apply('ask')} disabled={!app.selectedPath || (!useRead && !useEdit)}>
       Ask <kbd>K</kbd>
     </button>
-    <button class="deny" onclick={() => apply('deny')} disabled={!app.selectedPath}>
+    <button class="deny" onclick={() => apply('deny')} disabled={!app.selectedPath || (!useRead && !useEdit)}>
       Deny <kbd>D</kbd>
     </button>
     <button class="clear" onclick={clear} disabled={!current}>Clear rule</button>
@@ -159,7 +221,9 @@
     word-break: break-all;
     color: var(--text-1);
   }
-  select {
+  select,
+  input,
+  textarea {
     width: 100%;
     padding: 0.45rem;
     background: var(--bg-1);
@@ -167,6 +231,35 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-sm);
     font-size: 0.84rem;
+  }
+  textarea {
+    resize: vertical;
+    font-family: inherit;
+  }
+  .tools-field {
+    border: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+  }
+  .tools-field legend {
+    color: var(--text-3);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.3rem;
+    text-transform: uppercase;
+  }
+  .tools-field label {
+    color: var(--text-2);
+    font-size: 0.76rem;
+  }
+  .tools-field input {
+    width: auto;
+  }
+  .tools-field small {
+    color: var(--deny);
   }
   select:disabled {
     opacity: 0.5;

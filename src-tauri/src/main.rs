@@ -36,6 +36,7 @@ fn main() {
         .manage(WatchState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::diagnostic_report,
             commands::open_project,
             commands::list_dir,
             commands::load_settings,
@@ -46,6 +47,9 @@ fn main() {
             commands::build_diff,
             commands::save_settings,
             commands::list_recent_projects,
+            commands::set_project_profile,
+            commands::list_sensitive_paths,
+            commands::set_sensitive_path_dismissed,
             commands::read_raw_settings,
             commands::save_raw_settings,
             commands::validate_json,
@@ -62,8 +66,8 @@ fn main() {
             commands::policy_report,
             commands::export_template,
             commands::import_template,
-            commands::write_text_file,
-            commands::read_text_file,
+            commands::pick_policy_template,
+            commands::save_export_file,
             commands::list_agent_globals,
             commands::get_agent_global,
             commands::read_agent_config,

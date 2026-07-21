@@ -1,14 +1,26 @@
-//! Lightweight lint for Claude Code `settings.json` beyond the permissions block.
+//! Offline lint for Claude Code `settings.json` beyond the permissions block.
 //!
-//! Checks the *known* top-level keys against the official JSON Schema
-//! (https://www.schemastore.org/claude-code-settings.json, fetched 2026-07) at the
-//! type/enum level, and warns when `env` values look like plaintext secrets.
+//! Validates against a bundled copy of the official SchemaStore JSON Schema
+//! (https://json.schemastore.org/claude-code-settings.json, vendored 2026-07-22)
+//! and warns when `env` values look like plaintext secrets.
 //! Unknown keys are reported as info only — new Claude Code versions add keys
 //! faster than we ship, and unknown keys are harmless (Claude Code ignores them).
-//! Full JSON-Schema validation is a backlog item (docs/claude-code-settings-plan.md).
 
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::OnceLock;
+
+const BUNDLED_SCHEMA: &str = include_str!("../assets/claude-code-settings.schema.json");
+
+fn schema_validator() -> &'static jsonschema::Validator {
+    static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
+    VALIDATOR.get_or_init(|| {
+        let schema: Value = serde_json::from_str(BUNDLED_SCHEMA)
+            .expect("bundled Claude Code settings schema must be valid JSON");
+        jsonschema::validator_for(&schema)
+            .expect("bundled Claude Code settings schema must compile")
+    })
+}
 
 /// Severity of one lint finding. `Warn` = probably a mistake, `Info` = FYI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -41,6 +53,28 @@ fn info(path: &str, message: impl Into<String>) -> LintItem {
         level: LintLevel::Info,
         path: path.to_string(),
         message: message.into(),
+    }
+}
+
+fn pointer_to_path(pointer: &str) -> String {
+    if pointer.is_empty() {
+        return "$".into();
+    }
+    pointer
+        .trim_start_matches('/')
+        .split('/')
+        .map(|segment| segment.replace("~1", "/").replace("~0", "~"))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn lint_schema(root: &Value, out: &mut Vec<LintItem>) {
+    for error in schema_validator().iter_errors(root) {
+        let path = pointer_to_path(&error.instance_path().to_string());
+        out.push(warn(
+            &path,
+            format!("공식 Claude Code 스키마와 맞지 않습니다: {error}"),
+        ));
     }
 }
 
@@ -258,6 +292,8 @@ pub fn lint_value(root: &Value) -> Vec<LintItem> {
         return vec![warn("$", "settings.json 최상위는 JSON 객체여야 합니다")];
     };
 
+    lint_schema(root, &mut out);
+
     for (key, v) in obj {
         match KNOWN_KEYS.iter().find(|(k, _)| k == key) {
             Some((_, expect)) => check_known(key, expect, v, &mut out),
@@ -280,6 +316,20 @@ pub fn lint_value(root: &Value) -> Vec<LintItem> {
             "최신 버전에서는 attribution 키로 대체되었습니다 (여전히 동작함)".to_string(),
         ));
     }
+    if obj
+        .get("permissions")
+        .and_then(Value::as_object)
+        .is_some_and(|permissions| permissions.contains_key("defaultMode"))
+    {
+        out.push(info(
+            "permissions.defaultMode",
+            "Agent Guard가 관리하지 않는 값이며, 접근 권한 규칙을 저장하면 제거됩니다".to_string(),
+        ));
+    }
+
+    // The schema and compatibility checks intentionally overlap. Keep one copy
+    // of an identical finding while retaining distinct explanations at a path.
+    out.dedup_by(|a, b| a.level == b.level && a.path == b.path && a.message == b.message);
     out
 }
 
@@ -376,16 +426,18 @@ mod tests {
     }
 
     #[test]
-    fn version_drift_keys_never_warn() {
-        // statusLine was an object in older versions, a string now; spinnerTips
-        // flipped bool -> array. Both shapes must pass.
+    fn bundled_schema_is_authoritative_for_version_drift_keys() {
+        // Compatibility checks remain permissive, while the vendored current
+        // schema reports a formerly accepted shape precisely.
         let v = json!({
             "statusLine": { "type": "command", "command": "st.sh" },
             "spinnerTips": false
         });
         assert!(paths_of(&lint_value(&v), LintLevel::Warn).is_empty());
         let v2 = json!({ "statusLine": "st.sh", "spinnerTips": ["tip"] });
-        assert!(paths_of(&lint_value(&v2), LintLevel::Warn).is_empty());
+        assert!(paths_of(&lint_value(&v2), LintLevel::Warn)
+            .iter()
+            .any(|path| path == "statusLine"));
     }
 
     #[test]
@@ -393,5 +445,31 @@ mod tests {
         let items = lint_text("{ not json");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].level, LintLevel::Warn);
+    }
+
+    #[test]
+    fn bundled_schema_catches_nested_hook_shape_offline() {
+        let v = json!({
+            "hooks": {
+                "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": 42 }] }]
+            }
+        });
+        let warns = paths_of(&lint_value(&v), LintLevel::Warn);
+        assert!(
+            warns
+                .iter()
+                .any(|path| path.starts_with("hooks.PreToolUse")),
+            "{warns:?}"
+        );
+    }
+
+    #[test]
+    fn default_mode_explains_agent_guard_removal_behavior() {
+        let items = lint_value(&json!({ "permissions": { "defaultMode": "default" } }));
+        assert!(items.iter().any(|item| {
+            item.level == LintLevel::Info
+                && item.path == "permissions.defaultMode"
+                && item.message.contains("제거")
+        }));
     }
 }

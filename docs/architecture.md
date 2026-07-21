@@ -1,7 +1,7 @@
 # Architecture
 
-> 근거: 요구사항서 17장(기술 스택), 23장(Repo 구조). 프론트엔드 프레임워크 확정 전이므로
-> **Tauri command 계약 + 모듈 책임** 수준으로 프레임워크 비의존적으로 기술한다.
+> 근거: 요구사항서 17장(기술 스택), 23장(Repo 구조). 현재 구현의
+> **SvelteKit UI + Tauri command 경계 + 독립 Rust core**를 기준으로 기술한다.
 
 ---
 
@@ -16,14 +16,15 @@
                 │  invoke() commands     │  events (progress)
                 │  (JSON 직렬화)          ▼
 ┌───────────────┴───────────────────────────────────────────┐
-│  Rust Backend (Tauri core)                                 │
-│  fs_scan · settings · policy · backup · db · env           │
+│  Tauri commands (IPC + path boundary)                      │
+│  agentguard-core (settings · policy · backup · db · risk) │
 └───────────────┬───────────────────────────────────────────┘
                 ▼
    로컬 파일시스템 · %APPDATA%\AgentGuard\ (app.db, backups/)
 ```
 
-- **Local First**: 네트워크 호출 없음. 모든 처리는 로컬(요구사항서 3.1, 9.1).
+- **Local First**: 데스크톱 런타임은 네트워크/텔레메트리 없이 로컬에서 처리한다. 개발자용
+  Claude permission probe는 사용자가 따로 실행하는 CLI/API 검증이며 앱 런타임에 포함되지 않는다.
 - **경계 원칙**: 파일 I/O·JSON 직렬화·glob 매칭·DB는 **전부 Rust**. 프론트는 표시/상호작용만.
   민감 로직(변환·병합·백업)을 Rust에 두어 무결성과 테스트 용이성 확보.
 
@@ -33,13 +34,14 @@
 
 | 모듈 | 책임 |
 |---|---|
-| `main.rs` | Tauri 부트스트랩, command 등록, 앱 상태(열린 프로젝트, DB 핸들) |
-| `fs_scan.rs` | 프로젝트 파일 트리 lazy 스캔, 제외 폴더 처리, 위험 경로 스캔 |
-| `settings.rs` | User/Project/Local settings.json 탐지·로드·저장, 보존 파싱, Windows 경로 정규화 |
-| `policy.rs` | 중립 모델 ↔ Claude Code 변환(팬아웃/접기), Effective Policy 병합, 충돌 탐지 |
-| `backup.rs` | 저장 전 백업 생성, 백업 목록/미리보기/복원, Diff 생성 |
-| `db.rs` | SQLite 초기화, projects/project_paths/backups CRUD |
-| `env.rs` | (Should-have) AWS/Proxy 환경변수 읽기, Secret 감지 경고 |
+| `src-tauri/src/main.rs` | Tauri 부트스트랩, command 등록, DB 상태 초기화 |
+| `src-tauri/src/commands.rs` | 프론트 IPC DTO, 허용 경로 검증, core I/O orchestration |
+| `core/fs_scan.rs` | 프로젝트 파일 트리 lazy 스캔, 제외 폴더 처리, 위험 경로 스캔 |
+| `core/settings.rs` | User/Project/Local/managed-file 설정 탐지, 보존 파싱, 원자적 쓰기 |
+| `core/policy.rs`·`effective.rs` | 중립 모델 변환, Effective Policy 병합, 충돌 탐지 |
+| `core/backup.rs`·`db.rs` | 백업/복원 primitive와 SQLite CRUD·마이그레이션 |
+| `core/risk.rs`·`inspect.rs`·`simulate.rs` | 리스크 점수, 에이전트 표면 검사, 정책 시뮬레이션 |
+| `core/env.rs`·`settings_lint.rs` | AWS/Proxy 상태, Secret/Claude 설정 검증 경고 |
 
 각 모듈은 순수 함수(변환·병합·리스크 계산)와 I/O를 분리해 단위 테스트가 가능하게 한다.
 
@@ -59,7 +61,7 @@ compute_risk_score(projectRoot) -> RiskScore // 점수+등급
 
 ### settings 로드/저장
 ```
-load_settings(projectRoot) -> ScopedSettings // user/project/local 원문 + 파싱된 규칙
+load_settings(projectRoot) -> ScopedSettings // managed(read-only)+user/project/local 규칙
 build_diff(scope, nextRules) -> DiffResult    // 저장 전 Diff (변경 없이 계산)
 save_settings(scope, nextRules, {backup:true}) -> SaveResult  // 백업→검증→쓰기, 실패시 원본 보존
 ```
@@ -73,7 +75,7 @@ detect_conflicts(projectRoot) -> Conflict[]
 
 ### Raw JSON
 ```
-validate_json(text) -> ValidationResult      // 구문 + 스키마
+validate_json(text) -> ValidationResult      // 구문; 번들 스키마/lint는 별도 검증 계층
 format_json(text) -> string
 ```
 
@@ -113,7 +115,7 @@ get_env_status() -> EnvStatus                 // Should-have (env.rs)
 ```
 %APPDATA%\AgentGuard\
 ├─ app.db              # SQLite (data-model.md)
-├─ app-config.json     # 앱 설정 + 최근 프로젝트 캐시
+├─ app-config.json     # 예약된 경로(현재 생성/사용하지 않음)
 └─ backups\            # 타임스탬프 백업 (backup.rs)
 ```
 
@@ -124,9 +126,10 @@ get_env_status() -> EnvStatus                 // Should-have (env.rs)
 프론트엔드는 **SvelteKit(Svelte 5) + adapter-static(SPA)** 확정(tech-stack.md).
 
 ```
-agent-guard/
+AgentGuard/
+├─ crates/agentguard-core/src/       # Tauri-independent domain/I/O logic
 ├─ src-tauri/
-│  ├─ src/{main,fs_scan,settings,policy,backup,db,env}.rs
+│  ├─ src/{main,commands}.rs         # shell + narrow IPC layer
 │  └─ tauri.conf.json
 ├─ src/                          # SvelteKit 프론트
 │  ├─ routes/                    # 화면 (Home, Explorer 등) — SSR off
@@ -143,4 +146,5 @@ agent-guard/
 
 - SvelteKit은 `adapter-static`으로 정적 SPA 빌드 → Tauri WebView가 로드.
 - 상태는 Svelte 5 runes(`$state`/`$derived`)로 관리(전역은 `lib`의 runes 모듈).
-- Monaco는 `RawJsonEditor.svelte`에서 `onMount` 동적 import(초기 번들 경량 유지).
+- Raw JSON은 현재 `RawJsonEditor.svelte`의 textarea로 편집하고 Rust command에서
+  검증·포맷한다. Monaco는 구현된 구성요소가 아니라 후속 후보다.
