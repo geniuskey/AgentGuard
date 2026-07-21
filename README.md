@@ -98,3 +98,7 @@ conversion, risk scoring, storage) so it stays unit-testable on any host;
   매칭 규칙이 없는 경로는 Claude Code 기본 동작(실행 시 확인)을 따른다.
 - **앱 메타데이터는 SQLite에만** — `settings.json`에는 순수 규칙만 기록하고 알 수 없는
   필드는 무손실 보존한다.
+
+## License
+
+Agent Guard is available under the [MIT License](LICENSE).
