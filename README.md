@@ -14,16 +14,20 @@ agents can access inside a project — without having to understand `settings.js
 - Effective access preview (merged result across scopes)
 - Backup + diff before every save
 
+## App Preview
+
+![Agent Guard project policy editor and command simulator](docs/assets/agentguard-overview.png)
+
 ## Status
 
-Greenfield. This repository currently contains the **design & planning
-documents** that make the v0.1 requirements executable. The stack is confirmed —
-**Tauri 2 + SvelteKit (Svelte 5) + TypeScript + Rust + SQLite + Monaco**
-(see `docs/tech-stack.md`) — and code scaffolding follows next.
+The v0.1 desktop app is functional and under active development. It uses
+**Tauri 2 + SvelteKit (Svelte 5) + TypeScript + Rust + SQLite**; see the
+[live documentation site](https://geniuskey.github.io/AgentGuard/) and
+[`docs/tech-stack.md`](docs/tech-stack.md) for details.
 
 ## Development
 
-Prerequisites: Node 18+, Rust (stable), and — for the desktop shell — the
+Prerequisites: Node 20+, Rust (stable), and — for the desktop shell — the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
 
 ```bash
@@ -33,8 +37,12 @@ npm install              # frontend deps
 cargo test -p agentguard-core
 
 # Frontend (static SPA build + typecheck)
+npm test
 npm run build
 npm run check
+
+# Static documentation site (output: pages-dist/)
+npm run docs:build
 
 # Optional live Claude Code permission probes (authenticated CLI + API usage)
 npm run test:claude-permissions

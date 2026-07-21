@@ -24,6 +24,7 @@
   } from '$lib/state.svelte';
   import { describePattern } from '$lib/describe';
   import { tooltip } from '$lib/tooltip';
+  import { toggleWebBlockRules, webBlockState } from '$lib/web-block';
 
   let { scope }: { scope: ScopeName } = $props();
 
@@ -52,13 +53,9 @@
 
   const bucket = $derived(app.scoped[scope]);
   const rules = $derived(bucket.rules);
-  const configuredWebRules = $derived(
-    webSet.filter((rule) => (bucket.extraDeny ?? []).includes(rule))
-  );
-  const webBlocked = $derived(
-    webSet.length > 0 && configuredWebRules.length === webSet.length
-  );
-  const webPartial = $derived(!webBlocked && configuredWebRules.length > 0);
+  const webState = $derived(webBlockState(bucket.extraDeny ?? [], webSet));
+  const webBlocked = $derived(webState === 'on');
+  const webPartial = $derived(webState === 'partial');
 
   const counts = $derived({
     allow: rules.filter((r) => r.policy === 'allow').length,
@@ -229,12 +226,7 @@
   // Toggle the web-tool/common-client block. This is not an OS-level firewall.
   function toggleWebBlock() {
     const wasBlocked = webBlocked;
-    const current = bucket.extraDeny ?? [];
-    const webRules = new Set(webSet);
-    const next = wasBlocked
-      ? current.filter((rule) => !webRules.has(rule))
-      : [...current, ...webSet.filter((rule) => !current.includes(rule))];
-    setExtraDeny(scope, next);
+    setExtraDeny(scope, toggleWebBlockRules(bucket.extraDeny ?? [], webSet));
     status = wasBlocked
       ? '웹 접근 제한을 해제했습니다.'
       : '웹 도구와 대표 HTTP 클라이언트 차단을 추가했습니다 (저장 시 적용).';
