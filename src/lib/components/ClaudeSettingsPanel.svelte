@@ -1,13 +1,12 @@
 <script lang="ts">
   // Structured editor for Claude Code settings beyond the permissions block
-  // (~/.claude/settings.json). Non-developer-first: question-style Korean labels,
-  // "(기본값)" = key absent, caution notes on risky values, pre-save diff + backup.
-  //
-  // Field registry follows the official JSON Schema
-  // (https://www.schemastore.org/claude-code-settings.json). Each change writes one
-  // dotted-path key via config_set_value — every other key is preserved verbatim.
+  // (~/.claude/settings.json). Field knowledge lives in claude-settings-catalog.ts:
+  // every documented setting and env var is shown with the right control, so users
+  // pick values instead of typing key names. Each change writes one dotted-path key
+  // via config_set_value — every other key is preserved verbatim.
   import {
     configSetValue,
+    getEnvStatus,
     inTauri,
     lintClaudeSettings,
     pickFolder,
@@ -16,169 +15,28 @@
     type DiffView,
     type LintItem
   } from '$lib/ipc';
+  import {
+    CLAUDE_GROUPS,
+    ENV_GROUPS,
+    ENV_PRESETS,
+    KNOWN_ENV,
+    SECRET_ENV,
+    type EnvPreset
+  } from '$lib/claude-settings-catalog';
+  import { getAt, type FieldSpec } from '$lib/setting-field';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
+  import SettingControl from '$lib/components/SettingControl.svelte';
   import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
   import { modalFocus } from '$lib/modal';
   import { toast } from '$lib/toast.svelte';
   import { tick } from 'svelte';
-
-  interface Option {
-    v: unknown; // null = 키 제거(기본값으로)
-    label: string;
-  }
-  interface Field {
-    path: string;
-    label: string;
-    type: 'select' | 'text' | 'number' | 'folders';
-    options?: Option[];
-    placeholder?: string;
-    help?: string;
-    /** Shown highlighted when the current value satisfies the predicate. */
-    caution?: { when: (v: unknown) => boolean; text: string };
-  }
-  interface Section {
-    title: string;
-    fields: Field[];
-  }
 
   let {
     onsaved,
     dirty = $bindable(false)
   }: { onsaved?: () => void; dirty?: boolean } = $props();
 
-  const DEFAULT: Option = { v: null, label: '(기본값 — 키 없음)' };
-  const boolOpts: Option[] = [
-    DEFAULT,
-    { v: true, label: '켬 (true)' },
-    { v: false, label: '끔 (false)' }
-  ];
-  const sel = (values: string[]): Option[] => [DEFAULT, ...values.map((v) => ({ v, label: v }))];
-
-  const sections: Section[] = [
-    {
-      title: '모델 · 응답',
-      fields: [
-        {
-          path: 'model',
-          label: '기본 모델',
-          type: 'text',
-          placeholder: 'sonnet · opus · haiku 또는 전체 모델 ID',
-          help: '비워두면 Claude Code 기본 모델을 사용합니다'
-        },
-        {
-          path: 'effortLevel',
-          label: '추론 노력 수준',
-          type: 'select',
-          options: sel(['low', 'medium', 'high', 'xhigh']),
-          help: '높을수록 더 깊게 생각하지만 느려집니다'
-        },
-        {
-          path: 'alwaysThinkingEnabled',
-          label: '항상 확장 사고 사용',
-          type: 'select',
-          options: boolOpts,
-          help: '모든 응답에서 깊은 사고 과정을 켭니다'
-        },
-        {
-          path: 'language',
-          label: '응답 언어',
-          type: 'text',
-          placeholder: 'korean, english …',
-          help: 'Claude가 응답에 사용할 언어'
-        },
-        {
-          path: 'outputStyle',
-          label: '출력 스타일',
-          type: 'text',
-          placeholder: 'Explanatory, Learning …',
-          help: '/output-style 명령으로 만든 스타일 이름'
-        }
-      ]
-    },
-    {
-      title: '동작',
-      fields: [
-        { path: 'autoUpdates', label: '자동 업데이트', type: 'select', options: boolOpts },
-        {
-          path: 'autoUpdatesChannel',
-          label: '업데이트 채널',
-          type: 'select',
-          options: sel(['stable', 'latest'])
-        },
-        {
-          path: 'cleanupPeriodDays',
-          label: '대화 기록 보관 일수',
-          type: 'number',
-          placeholder: '30',
-          help: '지난 세션 기록을 며칠 동안 보관할지 (기본 30일)'
-        },
-        {
-          path: 'autoCompactEnabled',
-          label: '컨텍스트 자동 압축',
-          type: 'select',
-          options: boolOpts,
-          help: '대화가 길어지면 자동으로 요약해 이어갑니다'
-        },
-        {
-          path: 'autoMemoryEnabled',
-          label: '자동 메모리',
-          type: 'select',
-          options: boolOpts,
-          help: '프로젝트별로 배운 내용을 자동으로 저장합니다'
-        },
-        {
-          path: 'fileCheckpointingEnabled',
-          label: '파일 체크포인트 (/rewind)',
-          type: 'select',
-          options: boolOpts,
-          help: '파일 변경을 체크포인트로 저장해 /rewind로 되돌릴 수 있게 합니다'
-        }
-      ]
-    },
-    {
-      title: 'Git · 커밋',
-      fields: [
-        {
-          path: 'includeCoAuthoredBy',
-          label: '커밋에 Claude 서명 포함',
-          type: 'select',
-          options: boolOpts,
-          help: 'Co-Authored-By 트레일러. 기본값은 켬입니다'
-        }
-      ]
-    },
-    {
-      title: '권한 · 보안',
-      fields: [
-        {
-          path: 'permissions.disableBypassPermissionsMode',
-          label: '권한 우회 모드 금지',
-          type: 'select',
-          options: [
-            DEFAULT,
-            { v: 'disable', label: 'disable — bypassPermissions 사용 금지 (권장)' }
-          ],
-          help: '켜면 모든 확인을 건너뛰는 bypassPermissions 모드를 쓸 수 없게 됩니다'
-        },
-        {
-          path: 'enableAllProjectMcpServers',
-          label: '프로젝트 MCP 서버 자동 승인',
-          type: 'select',
-          options: boolOpts,
-          caution: {
-            when: (v) => v === true,
-            text: '켜면 프로젝트 .mcp.json의 모든 서버가 확인 없이 실행됩니다 — 신뢰할 수 있는 저장소에서만 켜세요'
-          }
-        },
-        {
-          path: 'permissions.additionalDirectories',
-          label: '추가 접근 허용 폴더',
-          type: 'folders',
-          help: '프로젝트 폴더 밖에서 Claude가 접근할 수 있는 폴더 목록'
-        }
-      ]
-    }
-  ];
+  const DIRS = 'permissions.additionalDirectories';
 
   let text = $state('');
   let onDisk = $state('');
@@ -188,15 +46,16 @@
   let panelEl = $state<HTMLDivElement>();
   let diff = $state<DiffView | null>(null);
   let lint = $state<LintItem[]>([]);
-  let newEnvName = $state('');
-  let newEnvValue = $state('');
+  let osEnv = $state<Record<string, string>>({});
+  let envQuery = $state('');
+  let customName = $state('');
+  let customValue = $state('');
 
   const changed = $derived(text !== onDisk);
   $effect(() => {
     dirty = changed;
   });
 
-  // The parsed tree drives every field display; unparseable text disables the form.
   const tree = $derived.by<Record<string, unknown> | null>(() => {
     try {
       return text.trim() === '' ? {} : JSON.parse(text);
@@ -219,10 +78,17 @@
     } finally {
       loading = false;
     }
+    try {
+      const st = await getEnvStatus();
+      osEnv = Object.fromEntries(
+        st.vars.filter((v) => v.present && !v.isSecret).map((v) => [v.name, v.display])
+      );
+    } catch {
+      osEnv = {};
+    }
   }
   load();
 
-  // Debounced lint of the current text (known-key types + plaintext secrets).
   $effect(() => {
     const current = text;
     if (!inTauri()) return;
@@ -236,15 +102,6 @@
     return () => clearTimeout(t);
   });
 
-  function getAt(path: string): unknown {
-    let cur: unknown = tree;
-    for (const seg of path.split('.')) {
-      if (cur === null || typeof cur !== 'object') return undefined;
-      cur = (cur as Record<string, unknown>)[seg];
-    }
-    return cur;
-  }
-
   function commit(path: string, v: unknown): Promise<void> {
     pending = pending.then(async () => {
       try {
@@ -256,105 +113,120 @@
     return pending;
   }
 
-  function selectedIndex(f: Field): number {
-    const value = getAt(f.path);
-    const opts = f.options ?? [];
-    const i = opts.findIndex((o) => (value === undefined ? o.v === null : o.v === value));
-    return i >= 0 ? i : 0;
-  }
+  // --- folders ---------------------------------------------------------------
 
-  function onSelect(f: Field, e: Event) {
-    const i = (e.currentTarget as HTMLSelectElement).selectedIndex;
-    commit(f.path, (f.options ?? [])[i]?.v ?? null);
-  }
-
-  function onText(f: Field, e: Event) {
-    const v = (e.currentTarget as HTMLInputElement).value.trim();
-    const current = getAt(f.path);
-    if (v === (typeof current === 'string' ? current : '')) return;
-    commit(f.path, v === '' ? null : v);
-  }
-
-  function onNumber(f: Field, e: Event) {
-    const raw = (e.currentTarget as HTMLInputElement).value.trim();
-    if (raw === '') {
-      commit(f.path, null);
-      return;
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return;
-    commit(f.path, n);
-  }
-
-  // --- folders (string array) ------------------------------------------------
-
-  function folderList(f: Field): string[] {
-    const v = getAt(f.path);
+  const folders = $derived.by<string[]>(() => {
+    const v = getAt(tree, DIRS);
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-  }
+  });
 
-  async function addFolder(f: Field) {
+  async function addFolder() {
     const picked = await pickFolder();
     if (!picked) return;
     const dir = picked.replaceAll('\\', '/');
-    const next = [...folderList(f), dir];
-    await commit(f.path, next);
+    if (folders.includes(dir)) return;
+    await commit(DIRS, [...folders, dir]);
   }
 
-  async function removeFolder(f: Field, dir: string) {
-    const prev = folderList(f);
+  async function removeFolder(dir: string) {
+    const prev = folders;
     const next = prev.filter((d) => d !== dir);
-    await commit(f.path, next.length ? next : null);
+    await commit(DIRS, next.length ? next : null);
     toast(`폴더를 목록에서 제거했습니다: ${dir}`, 'info', {
       label: '되돌리기',
-      run: () => commit(f.path, prev)
+      run: () => commit(DIRS, prev)
     });
   }
 
-  // --- env (string map) ------------------------------------------------------
+  // --- env -------------------------------------------------------------------
 
   const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-  const envEntries = $derived.by<[string, string][]>(() => {
-    const env = tree?.['env'];
-    if (env === null || typeof env !== 'object' || Array.isArray(env)) return [];
-    return Object.entries(env as Record<string, unknown>).map(([k, v]) => [
-      k,
-      typeof v === 'string' ? v : JSON.stringify(v)
-    ]);
+  const env = $derived.by<Record<string, string>>(() => {
+    const e = tree?.['env'];
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return {};
+    return Object.fromEntries(
+      Object.entries(e as Record<string, unknown>).map(([k, v]) => [
+        k,
+        typeof v === 'string' ? v : JSON.stringify(v)
+      ])
+    );
   });
+
+  const secretEntries = $derived(Object.keys(env).filter((k) => k in SECRET_ENV));
+  const customEntries = $derived(
+    Object.entries(env).filter(([k]) => !KNOWN_ENV.has(k) && !(k in SECRET_ENV))
+  );
+
+  function matches(f: FieldSpec, q: string): boolean {
+    if (!q) return true;
+    const hay = `${f.key} ${f.label} ${f.help ?? ''}`.toLowerCase();
+    return q
+      .toLowerCase()
+      .split(/\s+/)
+      .every((w) => hay.includes(w));
+  }
+
+  const envView = $derived(
+    ENV_GROUPS.map((g) => ({
+      ...g,
+      shown: g.fields.filter((f) => matches(f, envQuery.trim())),
+      setCount: g.fields.filter((f) => f.key in env).length
+    })).filter((g) => g.shown.length > 0)
+  );
+
+  function setEnv(name: string, v: unknown) {
+    return commit(`env.${name}`, v === null || v === undefined ? null : String(v));
+  }
 
   function envWarning(name: string): string | null {
     const hit = lint.find((l) => l.level === 'warn' && l.path === `env.${name}`);
     return hit ? hit.message : null;
   }
 
-  async function addEnv() {
-    const name = newEnvName.trim();
+  async function applyPreset(p: EnvPreset) {
+    const values = p.values(osEnv);
+    const before = Object.fromEntries(Object.keys(values).map((k) => [k, env[k] ?? null]));
+    for (const [k, v] of Object.entries(values)) await setEnv(k, v);
+    toast(`"${p.label}" 적용 — 저장하면 반영됩니다`, 'info', {
+      label: '되돌리기',
+      run: async () => {
+        for (const [k, v] of Object.entries(before)) await setEnv(k, v);
+      }
+    });
+  }
+
+  function presetActive(p: EnvPreset): boolean {
+    return Object.entries(p.values(osEnv)).every(([k, v]) => env[k] === v);
+  }
+
+  async function removeEnv(name: string) {
+    const value = env[name];
+    await setEnv(name, null);
+    toast(`환경변수를 삭제했습니다: ${name}`, 'info', {
+      label: '되돌리기',
+      run: () => setEnv(name, value)
+    });
+  }
+
+  async function addCustom() {
+    const name = customName.trim();
     if (!ENV_NAME_RE.test(name)) {
       toast(`환경변수 이름이 올바르지 않습니다: ${name || '(비어 있음)'}`, 'error');
       return;
     }
-    await commit(`env.${name}`, newEnvValue);
-    newEnvName = '';
-    newEnvValue = '';
-  }
-
-  async function setEnv(name: string, e: Event) {
-    await commit(`env.${name}`, (e.currentTarget as HTMLInputElement).value);
-  }
-
-  async function removeEnv(name: string, value: string) {
-    await commit(`env.${name}`, null);
-    toast(`환경변수를 삭제했습니다: ${name}`, 'info', {
-      label: '되돌리기',
-      run: () => commit(`env.${name}`, value)
-    });
+    if (KNOWN_ENV.has(name)) {
+      envQuery = name;
+      toast(`${name} 은(는) 위 목록에 이미 있습니다 — 거기서 설정하세요`, 'info');
+      return;
+    }
+    await setEnv(name, customValue);
+    customName = '';
+    customValue = '';
   }
 
   // --- save ------------------------------------------------------------------
 
-  // Flush a focused, not-yet-committed field (Ctrl+S from inside an input) first.
   export async function openSaveDialog() {
     const active = document.activeElement;
     if (active instanceof HTMLElement && panelEl?.contains(active)) {
@@ -392,18 +264,15 @@
     }
   }
 
-  const lintWarns = $derived(lint.filter((l) => l.level === 'warn'));
+  const lintWarns = $derived(
+    lint.filter((l) => l.level === 'warn' && !l.path.startsWith('env.'))
+  );
   const lintInfos = $derived(lint.filter((l) => l.level === 'info'));
 </script>
 
 <UnsavedMarker id="claude-general" when={changed} />
 
 <div class="panel" bind:this={panelEl}>
-  <p class="intro">
-    권한 규칙 외의 Claude Code 전역 설정입니다. "(기본값)"을 선택하면 키를 제거해 Claude Code
-    기본 동작을 따릅니다. 저장은 상단 저장 버튼(Ctrl+S)으로 합니다.
-  </p>
-
   {#if lintWarns.length}
     <div class="lint" role="alert">
       {#each lintWarns as l (l.path + l.message)}
@@ -422,128 +291,161 @@
     </p>
   {:else}
     <div class="scroll">
-      {#each sections as s (s.title)}
-        <section>
-          <h4>{s.title}</h4>
-          {#each s.fields as f (f.path)}
-            {@const helpId = f.help ? `${f.path}-help` : undefined}
-            <div class="row">
-              {#if f.type === 'folders'}
-                <span class="lbl" id="{f.path}-label" title={f.path}>{f.label}</span>
-              {:else}
-                <label class="lbl" for={f.path} title={f.path}>{f.label}</label>
-              {/if}
-              {#if f.type === 'select'}
-                <select id={f.path} aria-describedby={helpId} onchange={(e) => onSelect(f, e)}>
-                  {#each f.options ?? [] as o, i (i)}
-                    <option value={i} selected={i === selectedIndex(f)}>{o.label}</option>
-                  {/each}
-                </select>
-              {:else if f.type === 'number'}
-                {@const nv = getAt(f.path)}
-                <input
-                  id={f.path}
-                  type="number"
-                  value={typeof nv === 'number' ? nv : ''}
-                  placeholder={f.placeholder}
-                  aria-describedby={helpId}
-                  onchange={(e) => onNumber(f, e)}
-                />
-              {:else if f.type === 'folders'}
-                <div
-                  class="folders"
-                  role="group"
-                  aria-labelledby="{f.path}-label"
-                  aria-describedby={helpId}
-                >
-                  {#each folderList(f) as dir (dir)}
-                    <span class="folder-chip">
-                      <span class="dir">{dir}</span>
-                      <button
-                        class="x"
-                        title="목록에서 제거"
-                        aria-label={`${dir} 제거`}
-                        onclick={() => removeFolder(f, dir)}>×</button
-                      >
-                    </span>
-                  {/each}
-                  <button class="btn btn-sm" onclick={() => addFolder(f)}>+ 폴더 선택…</button>
-                </div>
-              {:else}
-                {@const tv = getAt(f.path)}
-                <input
-                  id={f.path}
-                  type="text"
-                  value={typeof tv === 'string' ? tv : ''}
-                  placeholder={f.placeholder}
-                  spellcheck="false"
-                  aria-describedby={helpId}
-                  onchange={(e) => onText(f, e)}
-                />
-              {/if}
-            </div>
-            {#if f.help}<p class="help" id={helpId}>{f.help}</p>{/if}
-            {#if f.caution && f.caution.when(getAt(f.path))}
-              <p class="callout callout-warn caution" role="note">{f.caution.text}</p>
-            {/if}
+      <p class="intro">
+        모든 프로젝트에 적용되는 Claude Code 설정입니다. <b>기본값</b>을 고르면 설정이 지워지고
+        Claude Code 기본 동작을 따릅니다. 항목 이름에 마우스를 올리면 실제 키가 보입니다.
+      </p>
+
+      {#each CLAUDE_GROUPS as g (g.title)}
+        <section class="card">
+          <header>
+            <h3>{g.title}</h3>
+            {#if g.description}<p class="desc">{g.description}</p>{/if}
+          </header>
+          {#each g.fields as f (f.key)}
+            <SettingControl field={f} value={getAt(tree, f.key)} onchange={(v) => commit(f.key, v)} />
           {/each}
+          {#if g.title === '안전'}
+            <div class="row-custom">
+              <div>
+                <span class="lbl">프로젝트 밖에서 접근할 폴더</span>
+                <p class="help">작업 중인 프로젝트 외에 Claude가 읽고 쓸 수 있는 폴더입니다</p>
+              </div>
+              <div class="folders">
+                {#each folders as dir (dir)}
+                  <span class="folder-chip">
+                    <span class="dir">{dir}</span>
+                    <button class="x" aria-label={`${dir} 제거`} onclick={() => removeFolder(dir)}>×</button>
+                  </span>
+                {:else}
+                  <span class="none">없음</span>
+                {/each}
+                <button class="btn btn-sm" onclick={addFolder}>+ 폴더 선택…</button>
+              </div>
+            </div>
+          {/if}
         </section>
       {/each}
 
-      <section>
-        <h4>환경변수 (env)</h4>
-        <p class="help" id="env-help">
-          Claude Code 세션에만 적용되는 환경변수입니다. API 키 같은 비밀값은 여기 넣지 말고
-          OS 환경변수나 apiKeyHelper를 사용하세요.
-        </p>
-        {#each envEntries as [name, value] (name)}
-          <div class="env-row">
-            <code class="env-name">{name}</code>
-            <input
-              type="text"
-              class="env-value"
-              {value}
-              spellcheck="false"
-              aria-label={`${name} 값`}
-              onchange={(e) => setEnv(name, e)}
-            />
-            <button
-              class="x"
-              title="변수 삭제"
-              aria-label={`${name} 삭제`}
-              onclick={() => removeEnv(name, value)}>×</button
-            >
-          </div>
-          {#if envWarning(name)}
-            <p class="callout callout-warn caution">{envWarning(name)}</p>
-          {/if}
-        {/each}
-        <div class="env-row new">
-          <input
-            type="text"
-            class="env-name-in"
-            placeholder="이름 (예: ANTHROPIC_MODEL)"
-            spellcheck="false"
-            aria-label="새 환경변수 이름"
-            aria-describedby="env-help"
-            bind:value={newEnvName}
-          />
-          <input
-            type="text"
-            class="env-value"
-            placeholder="값"
-            spellcheck="false"
-            aria-label="새 환경변수 값"
-            bind:value={newEnvValue}
-            onkeydown={(e) => e.key === 'Enter' && newEnvName.trim() && addEnv()}
-          />
-          <button class="btn btn-sm" onclick={addEnv} disabled={!newEnvName.trim()}>추가</button>
+      <section class="card">
+        <header>
+          <h3>환경변수</h3>
+          <p class="desc">
+            Claude Code가 지원하는 환경변수를 모두 모아 두었습니다. 필요한 항목만 켜거나 고르세요 —
+            Claude Code 세션에만 적용됩니다.
+          </p>
+        </header>
+
+        <div class="presets" aria-label="빠른 설정">
+          {#each ENV_PRESETS as p (p.id)}
+            {@const active = presetActive(p)}
+            <button class="preset" class:active disabled={active} onclick={() => applyPreset(p)}>
+              <span class="p-label">{active ? '적용됨 · ' : ''}{p.label}</span>
+              <span class="p-desc">{p.description}</span>
+            </button>
+          {/each}
         </div>
+
+        {#if secretEntries.length}
+          <div class="callout callout-warn secrets" role="alert">
+            <p>
+              비밀값이 설정 파일에 평문으로 저장되어 있습니다. 파일이 유출되면 그대로 노출되므로 OS
+              환경변수나 <code>apiKeyHelper</code>로 옮기는 것을 권장합니다.
+            </p>
+            {#each secretEntries as k (k)}
+              <div class="secret-row">
+                <span>{SECRET_ENV[k]} <code>{k}</code></span>
+                <button class="btn btn-sm btn-danger" onclick={() => removeEnv(k)}>설정에서 삭제</button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        <input
+          class="input search"
+          type="search"
+          placeholder="환경변수 찾기 — 예: 프록시, 타임아웃, bedrock"
+          aria-label="환경변수 검색"
+          bind:value={envQuery}
+        />
+
+        {#each envView as g (g.id)}
+          <details class="env-group" open={envQuery.trim() !== '' || g.setCount > 0}>
+            <summary>
+              <span class="g-title">{g.title}</span>
+              {#if g.setCount}<span class="chip chip-accent">{g.setCount}개 설정됨</span>{/if}
+            </summary>
+            {#if g.description}<p class="desc g-desc">{g.description}</p>{/if}
+            {#each g.shown as f (f.key)}
+              <SettingControl field={f} value={env[f.key]} onchange={(v) => setEnv(f.key, v)}>
+                {#snippet extra()}
+                  {#if osEnv[f.key] && env[f.key] === undefined}
+                    <p class="os-hint">
+                      이 PC에 이미 <code>{osEnv[f.key]}</code> 로 설정되어 있어 그대로 적용됩니다.
+                      <button class="link" onclick={() => setEnv(f.key, osEnv[f.key])}>
+                        설정 파일에 고정
+                      </button>
+                    </p>
+                  {/if}
+                  {#if envWarning(f.key)}
+                    <p class="callout callout-warn caution">{envWarning(f.key)}</p>
+                  {/if}
+                {/snippet}
+              </SettingControl>
+            {/each}
+          </details>
+        {:else}
+          <p class="muted">"{envQuery}" 와 일치하는 환경변수가 없습니다. 아래에서 직접 추가할 수 있습니다.</p>
+        {/each}
+
+        <details class="env-group" open={customEntries.length > 0}>
+          <summary>
+            <span class="g-title">목록에 없는 변수</span>
+            {#if customEntries.length}<span class="chip">{customEntries.length}개</span>{/if}
+          </summary>
+          <p class="desc g-desc">
+            도구나 MCP 서버가 요구하는 변수처럼 위 목록에 없는 것은 이름과 값을 직접 입력합니다.
+          </p>
+          {#each customEntries as [name, value] (name)}
+            <div class="env-row">
+              <code class="env-name">{name}</code>
+              <input
+                class="input mono"
+                {value}
+                spellcheck="false"
+                aria-label={`${name} 값`}
+                onchange={(e) => setEnv(name, (e.currentTarget as HTMLInputElement).value)}
+              />
+              <button class="x" aria-label={`${name} 삭제`} onclick={() => removeEnv(name)}>×</button>
+            </div>
+            {#if envWarning(name)}
+              <p class="callout callout-warn caution">{envWarning(name)}</p>
+            {/if}
+          {/each}
+          <div class="env-row">
+            <input
+              class="input mono"
+              placeholder="이름 (예: MY_TOOL_HOME)"
+              spellcheck="false"
+              aria-label="새 환경변수 이름"
+              bind:value={customName}
+            />
+            <input
+              class="input mono"
+              placeholder="값"
+              spellcheck="false"
+              aria-label="새 환경변수 값"
+              bind:value={customValue}
+              onkeydown={(e) => e.key === 'Enter' && customName.trim() && addCustom()}
+            />
+            <button class="btn btn-sm" onclick={addCustom} disabled={!customName.trim()}>추가</button>
+          </div>
+        </details>
       </section>
 
       {#if lintInfos.length}
-        <section>
-          <h4>참고</h4>
+        <section class="card">
+          <header><h3>그 밖의 설정</h3></header>
           {#each lintInfos as l (l.path + l.message)}
             <p class="note"><code>{l.path}</code> — {l.message}</p>
           {/each}
@@ -551,8 +453,8 @@
       {/if}
 
       <p class="note">
-        변경은 즉시 위 텍스트 상태에 반영되고, 저장 버튼을 눌러야 파일에 기록됩니다(자동 백업).
-        여기에 없는 키는 Raw JSON 탭에서 편집하세요 — 그대로 보존됩니다.
+        변경은 저장 버튼(Ctrl+S)을 눌러야 파일에 기록되며, 저장 전 자동으로 백업됩니다. 여기에 없는
+        설정은 Raw JSON 탭에서 편집하세요 — 그대로 보존됩니다.
       </p>
     </div>
   {/if}
@@ -589,12 +491,6 @@
     padding: 0.6rem 0.8rem;
     box-sizing: border-box;
   }
-  .intro {
-    color: var(--text-3);
-    font-size: var(--fs-sm);
-    margin: 0 0 0.5rem;
-    line-height: 1.5;
-  }
   .lint {
     display: flex;
     flex-direction: column;
@@ -605,10 +501,6 @@
     font-size: var(--fs-sm);
     padding: 0.25rem 0.55rem;
   }
-  .lint-item code {
-    font-weight: 600;
-    margin-right: 0.3rem;
-  }
   .scroll {
     flex: 1;
     overflow: auto;
@@ -616,61 +508,48 @@
     padding-right: 0.3rem;
     container-type: inline-size;
   }
-  section {
-    margin-bottom: 1rem;
-  }
-  h4 {
+  .intro {
     color: var(--text-2);
-    font-size: 0.72rem;
-    letter-spacing: 0.04em;
-    margin: 0 0 0.4rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.25rem;
+    font-size: var(--fs-sm);
+    margin: 0 0 0.7rem;
+    line-height: 1.55;
   }
-  .row {
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 0.7rem 0.9rem 0.3rem;
+    margin-bottom: 0.8rem;
+  }
+  .card header {
+    margin-bottom: 0.2rem;
+  }
+  h3 {
+    font-size: var(--fs-lg);
+    margin: 0;
+    color: var(--text-1);
+  }
+  .desc {
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+    margin: 0.2rem 0 0;
+    line-height: 1.5;
+  }
+  .row-custom {
     display: grid;
-    grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr);
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.18rem 0;
+    grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
+    gap: 0.35rem 1rem;
+    padding: 0.55rem 0;
+    border-top: 1px solid var(--border);
   }
   .lbl {
-    font-size: 0.78rem;
-    color: var(--text-1);
-  }
-  select,
-  input {
-    background: var(--bg-1);
-    color: var(--text-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
-    padding: 0.32rem 0.5rem;
-    font-size: 0.76rem;
-    min-width: 0;
-  }
-  input {
-    font-family: var(--font-mono);
-  }
-  input::placeholder {
-    color: var(--text-3);
-    font-family: var(--font-sans);
-  }
-  select:focus,
-  input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+    font-size: var(--fs-md);
+    font-weight: 500;
   }
   .help {
     color: var(--text-3);
     font-size: var(--fs-xs);
-    margin: 0 0 0.25rem;
-    padding-left: 0.1rem;
-  }
-  .caution {
-    font-size: 0.7rem;
-    padding: 0.25rem 0.5rem;
-    margin: 0.15rem 0 0.35rem;
+    margin: 0.15rem 0 0;
   }
   .folders {
     display: flex;
@@ -679,17 +558,20 @@
     gap: 0.3rem;
     min-width: 0;
   }
+  .none {
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+  }
   .folder-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    min-width: 0;
     max-width: 100%;
-    background: var(--bg-1);
+    background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 0.12rem 0.3rem 0.12rem 0.6rem;
-    font-size: 0.7rem;
+    font-size: var(--fs-xs);
   }
   .dir {
     font-family: var(--font-mono);
@@ -711,26 +593,149 @@
     color: var(--deny);
     background: var(--deny-soft);
   }
+  .presets {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    gap: 0.45rem;
+    margin: 0.6rem 0;
+  }
+  .preset {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    text-align: left;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    padding: 0.5rem 0.65rem;
+    cursor: pointer;
+    color: var(--text-1);
+    transition: border-color var(--t-fast), background-color var(--t-fast);
+  }
+  .preset:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .preset.active {
+    border-color: var(--allow-line);
+    background: var(--allow-soft);
+    cursor: default;
+  }
+  .p-label {
+    font-size: var(--fs-md);
+    font-weight: 600;
+  }
+  .p-desc {
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+    line-height: 1.4;
+  }
+  .secrets {
+    margin: 0.4rem 0;
+    font-size: var(--fs-sm);
+  }
+  .secrets p {
+    margin: 0 0 0.4rem;
+  }
+  .secret-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+  }
+  .search {
+    margin: 0.3rem 0 0.5rem;
+    font-size: var(--fs-sm);
+  }
+  .env-group {
+    border-top: 1px solid var(--border);
+    padding: 0.15rem 0;
+  }
+  .env-group summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0;
+    cursor: pointer;
+    list-style: none;
+  }
+  .env-group summary::-webkit-details-marker {
+    display: none;
+  }
+  .env-group summary::before {
+    content: '▸';
+    color: var(--text-3);
+    font-size: 0.7rem;
+    transition: transform var(--t-fast);
+  }
+  .env-group[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .g-title {
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .g-desc {
+    margin: 0 0 0.2rem 1.1rem;
+  }
+  .os-hint {
+    margin: 0;
+    font-size: var(--fs-xs);
+    color: var(--allow);
+  }
+  .os-hint code {
+    font-family: var(--font-mono);
+  }
+  .link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 0.3rem;
+    color: var(--accent-text);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .caution {
+    font-size: var(--fs-xs);
+    padding: 0.25rem 0.5rem;
+    margin: 0.15rem 0 0.35rem;
+  }
   .env-row {
     display: grid;
     grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.15rem 0;
+    padding: 0.2rem 0;
   }
   .env-name {
     font-size: var(--fs-sm);
-    color: var(--text-1);
     word-break: break-all;
   }
-  .env-name-in,
-  .env-value {
+  .input {
     font-size: var(--fs-sm);
+    padding: 0.32rem 0.5rem;
   }
-  @container (max-width: 30rem) {
-    .row {
+  .mono {
+    font-family: var(--font-mono);
+  }
+  .mono::placeholder {
+    font-family: var(--font-sans);
+  }
+  .note {
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+    margin: 0.3rem 0;
+    line-height: 1.5;
+  }
+  .note code {
+    color: var(--text-2);
+  }
+  @container (max-width: 34rem) {
+    .row-custom {
       grid-template-columns: minmax(0, 1fr);
-      gap: 0.25rem;
     }
     .env-row {
       grid-template-columns: minmax(0, 1fr) auto;
@@ -739,16 +744,6 @@
       grid-column: 1 / -1;
     }
   }
-  .note {
-    color: var(--text-3);
-    font-size: 0.7rem;
-    margin: 0.25rem 0;
-    line-height: 1.5;
-  }
-  .note code {
-    color: var(--text-2);
-  }
-  /* Modal chrome comes from the shared app.css (.modal-bg / .modal / .modal-actions). */
   .fp {
     color: var(--text-3);
     font-size: 0.75rem;

@@ -220,6 +220,10 @@ fn secret_looking(name: &str, value: &str) -> bool {
     if value.starts_with('$') {
         return false;
     }
+    // Pure numbers are limits/timeouts (`MAX_THINKING_TOKENS=31999`), not credentials.
+    if value.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
     let upper = name.to_ascii_uppercase();
     SECRET_VALUE_PREFIXES.iter().any(|p| value.starts_with(p))
         || SECRET_NAME_HINTS.iter().any(|h| upper.contains(h))
@@ -407,7 +411,8 @@ mod tests {
                 "ANTHROPIC_API_KEY": "sk-ant-abc123",
                 "MY_TOKEN": "some-value",
                 "GITHUB_TOKEN": "$GH_TOKEN",
-                "AWS_REGION": "us-east-1"
+                "AWS_REGION": "us-east-1",
+                "MAX_THINKING_TOKENS": "31999"
             }
         });
         let warns = paths_of(&lint_value(&v), LintLevel::Warn);
@@ -415,6 +420,7 @@ mod tests {
         assert!(warns.contains(&"env.MY_TOKEN".to_string())); // name hint
         assert!(!warns.contains(&"env.GITHUB_TOKEN".to_string())); // $ reference
         assert!(!warns.contains(&"env.AWS_REGION".to_string()));
+        assert!(!warns.contains(&"env.MAX_THINKING_TOKENS".to_string())); // numeric limit
     }
 
     #[test]
