@@ -265,15 +265,12 @@
   }
   .pd-allow {
     background: var(--allow);
-    box-shadow: 0 0 6px var(--allow-line);
   }
   .pd-deny {
     background: var(--deny);
-    box-shadow: 0 0 6px var(--deny-line);
   }
   .pd-ask {
     background: var(--ask);
-    box-shadow: 0 0 6px var(--ask-line);
   }
   .pd-conflict {
     background: var(--deny);

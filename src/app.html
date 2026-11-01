@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#080c14" />
+    <meta name="theme-color" content="#0a0a0b" />
     <script>
       // Apply the saved theme before first paint to avoid a dark->light flash.
       try {
@@ -15,9 +15,7 @@
     </script>
     %sveltekit.head%
   </head>
-  <!-- background-color only (no shorthand): the value must follow the theme var,
-       and the shorthand would kill the body gradient from app.css. -->
-  <body data-sveltekit-preload-data="hover" style="background-color: var(--bg-0, #080c14)">
+  <body data-sveltekit-preload-data="hover" style="background-color: var(--bg-0, #0a0a0b)">
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

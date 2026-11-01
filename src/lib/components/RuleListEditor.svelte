@@ -781,7 +781,7 @@
 
   .tree {
     border: 1px solid var(--border);
-    background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+    background: var(--bg-1);
     border-radius: var(--r-md);
     padding: 0.45rem 0.55rem;
     margin: 0.3rem 0;

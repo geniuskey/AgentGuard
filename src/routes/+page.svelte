@@ -74,17 +74,11 @@
   <header class="hero">
     <div class="logo" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="44" height="44" fill="none">
-        <defs>
-          <linearGradient id="ag-shield" x1="4" y1="2" x2="20" y2="22" gradientUnits="userSpaceOnUse">
-            <stop offset="0" style="stop-color: var(--accent-text)" />
-            <stop offset="1" style="stop-color: var(--accent-strong)" />
-          </linearGradient>
-        </defs>
         <path
           d="M12 2.2 20 5.4v5.7c0 5.4-3.3 9.2-8 10.7-4.7-1.5-8-5.3-8-10.7V5.4l8-3.2Z"
-          fill="url(#ag-shield)"
+          fill="var(--accent)"
           fill-opacity="0.16"
-          stroke="url(#ag-shield)"
+          stroke="var(--accent)"
           stroke-width="1.5"
           stroke-linejoin="round"
         />
@@ -231,18 +225,13 @@
     width: 64px;
     height: 64px;
     border-radius: 18px;
-    background: linear-gradient(160deg, var(--bg-3), var(--bg-1));
-    border: 1px solid var(--border-strong);
-    box-shadow: var(--shadow-1);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
   }
   h1 {
     margin: 0;
     font-size: 1.9rem;
     letter-spacing: -0.03em;
-    background: linear-gradient(100deg, var(--text-1) 55%, var(--accent-text));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
   }
   .tagline {
     color: var(--text-2);
@@ -271,15 +260,10 @@
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
-    box-shadow: var(--glow-accent);
-    transition: background-color var(--t-fast), transform var(--t-fast);
+    transition: background-color var(--t-fast);
   }
   button.primary:hover:not(:disabled) {
     background: var(--accent-hover);
-    transform: translateY(-1px);
-  }
-  button.primary:active:not(:disabled) {
-    transform: translateY(0);
   }
   button.primary:disabled {
     opacity: 0.6;
@@ -353,16 +337,15 @@
     padding: 0.85rem 1rem;
     border-radius: var(--r-md);
     border: 1px solid var(--border);
-    background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+    background: var(--bg-1);
     color: var(--text-1);
     cursor: pointer;
     box-sizing: border-box;
-    transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+    transition: border-color var(--t-fast), background-color var(--t-fast);
   }
   .card:hover:not(:disabled) {
     border-color: var(--border-strong);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-2);
+    background: var(--bg-2);
   }
   .card:disabled,
   .row:disabled {

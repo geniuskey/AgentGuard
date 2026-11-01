@@ -749,7 +749,7 @@
     gap: 0.6rem;
     padding: 0.5rem 0.8rem;
     border-bottom: 1px solid var(--border);
-    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    background: var(--bg-1);
     flex-shrink: 0;
     min-width: 0;
   }
