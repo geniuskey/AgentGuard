@@ -68,7 +68,7 @@ signing is set up.
 
 The release workflow rejects inconsistent versions. `package.json`,
 `package-lock.json`, the Cargo workspace, and `src-tauri/tauri.conf.json` must
-all remain at the current development version, `0.1.1`.
+all remain at the current development version, `0.2.0`.
 
 The live permission probe uses isolated temporary settings and does not modify
 your user or project settings. It verifies a PowerShell wildcard Allow, Deny

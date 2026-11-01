@@ -6,6 +6,18 @@ Agent Guard의 사용자에게 보이는 변경 사항을 기록합니다. 형�
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-02
+
+### Changed
+
+- Claude Code 전역 설정을 Codex/OpenCode와 같은 구성으로 통일: 제목·설명 형식을 맞추고 일반 설정을
+  첫 탭으로 표시.
+- CLI에서 그대로 입력하는 이름과 값은 영어로 표기: `/effort`, `/model`, `/output-style` 같은 명령과
+  `low`/`medium`/`high`, `stable`/`latest`, `on-request`, `workspace-write` 같은 설정 값.
+- 그라데이션과 glow 효과를 걷어낸 평면 테마.
+- 사이드바 프로젝트 아이콘(이니셜 모노그램) 추가. 접힌 상태에서도 공간이 허락하는 만큼 최근
+  프로젝트를 표시하고, 전환 메뉴에는 사이드바에 없는 프로젝트만 표시.
+
 ## [0.1.1] - 2026-11-02
 
 ### Added
@@ -55,6 +67,7 @@ production-ready 릴리스로 간주하지 않습니다.
 - 정책 시뮬레이터, MCP/hooks 보안 가시화, 환경/secret 경고.
 - Windows NSIS/MSI 및 portable EXE를 만드는 수동 GitHub Actions 프리릴리스 workflow.
 
-[Unreleased]: https://github.com/geniuskey/AgentGuard/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/geniuskey/AgentGuard/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/geniuskey/AgentGuard/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/geniuskey/AgentGuard/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/geniuskey/AgentGuard/releases/tag/v0.1.0
