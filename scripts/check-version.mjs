@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const expectedVersion = '0.1.0';
+const expectedVersion = '0.1.1';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function readJson(relativePath) {

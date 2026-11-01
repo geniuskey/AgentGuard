@@ -6,8 +6,17 @@ Agent Guard의 사용자에게 보이는 변경 사항을 기록합니다. 형�
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-02
+
 ### Added
 
+- MCP 서버 추가·삭제: 추천 목록(오프라인 내장) 또는 JSON·`claude mcp add` 명령 붙여넣기로 가져오고,
+  project(`.mcp.json`)·local·user(`~/.claude.json`) 중 저장 위치 선택. 섹션 단위 Diff와 자동 백업.
+- 프로젝트 MCP 서버 켜기/끄기(`settings.local.json`의 승인 목록).
+- local 스코프(`~/.claude.json`의 프로젝트별) MCP 서버를 목록과 리스크 점수에 포함.
+- 환경변수 카탈로그 확장: 자격 증명 보호(하위 프로세스 비밀 값 제거, MCP 최소 환경), Microsoft
+  Foundry, mTLS, 인증서 저장소, 한도·시간 제한 항목과 "비밀 값 유출 막기" 프리셋.
+- 전역 사이드바 내비게이션과 설정 페이지, 에이전트 일반 설정의 알려진 값 카탈로그.
 - SQLite에 저장한 정책 메타데이터, 선택한 리스크 프로필, 스캐너 무시 상태의 재로드 경로.
 - Policy Editor의 Read/Edit 도구 선택, 사유, 위험도, 메모 입력.
 - 저장·복원 경로 검증과 파일/DB 부분 실패에 대한 오류 처리.
@@ -33,10 +42,10 @@ Agent Guard의 사용자에게 보이는 변경 사항을 기록합니다. 형�
 - Diff 확인 뒤 외부에서 설정이 바뀌었으면 구조화 규칙 저장을 중단.
 - 백업과 import/export IPC가 앱이 발급한 경로/식별자와 허용된 대상만 처리하도록 경계를 강화.
 
-## [0.1.0] - TBD
+## [0.1.0] - 2026-07-21
 
-첫 공개 프리릴리스 후보입니다. 아직 태그가 만들어지지 않았으며, 코드 서명과 깨끗한
-Windows VM 승인 검사가 끝날 때까지 production-ready 릴리스로 간주하지 않습니다.
+첫 공개 프리릴리스입니다. 코드 서명과 깨끗한 Windows VM 승인 검사가 끝날 때까지
+production-ready 릴리스로 간주하지 않습니다.
 
 ### Added
 
@@ -46,5 +55,6 @@ Windows VM 승인 검사가 끝날 때까지 production-ready 릴리스로 간�
 - 정책 시뮬레이터, MCP/hooks 보안 가시화, 환경/secret 경고.
 - Windows NSIS/MSI 및 portable EXE를 만드는 수동 GitHub Actions 프리릴리스 workflow.
 
-[Unreleased]: https://github.com/geniuskey/AgentGuard/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/geniuskey/AgentGuard/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/geniuskey/AgentGuard/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/geniuskey/AgentGuard/releases/tag/v0.1.0
