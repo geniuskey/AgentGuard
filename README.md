@@ -11,7 +11,7 @@ agents can access inside a project — without having to understand `settings.js
 - Local-first desktop runtime (no telemetry or project upload)
 - Visual project boundary editor (Explorer-style Allow / Ask / Deny)
 - User / Project / Local settings plus read-only Windows managed-file preview
-- Effective access preview (merged result across scopes)
+- Tool-specific explicit-rule comparison across scopes (not a runtime approval prediction)
 - Backup + diff before every save
 
 ## App Preview
@@ -110,13 +110,17 @@ Top-level [CHANGELOG.md](CHANGELOG.md) tracks release changes and
 - **경로 정책은 `Tool(specifier)`로 팬아웃** — Claude Code는 도구 중심 permission을
   사용하므로 "Allow `src/`"는 `Read/Edit(./src/**)`로 확장된다(파일 권한 검사가 매칭하는 도구는 Read·Edit뿐).
 - **정책은 명시적 경로 규칙만으로 통제** — 민감 경로는 폴더 단위 Deny, 작업 폴더는 Allow.
-  deny-by-default 모드(`defaultMode: "dontAsk"`)는 폐기했고, 파일에 남은 값은 저장 시 제거한다.
-  매칭 규칙이 없는 경로는 Claude Code 기본 동작(실행 시 확인)을 따른다.
+  기존 `permissions.defaultMode`와 기타 설정은 보존한다.
+  매칭 규칙이 없는 경로는 판정하지 않으며, 실제 승인은 도구·실행 모드 등에 따라 달라진다.
+- **스캔은 이름 기반 후보 발견** — 루트 한 단계만 검사하며, 후보는 기본 미선택이다.
+  사용자가 도구와 권한을 선택하고, 기존 규칙 교체를 명시한 뒤 저장한다.
+  근거가 부족한 위험 점수·보안 프로필·에이전트별 일괄 보안 프리셋은 UI에 제공하지 않는다.
 - **앱 메타데이터는 SQLite에만** — `settings.json`에는 순수 규칙만 기록하고 알 수 없는
   필드는 무손실 보존한다.
 
 ## Known limitations
 
+- The rule comparator supports simple path globs and shell commands. Unsupported patterns, compound commands, aliases, and missing context produce no verdict; it does not model runtime approval.
 - The Raw JSON editor is currently a validated textarea, not Monaco. Syntax
   highlighting and Monaco worker integration remain deferred.
 - Managed policy files participate in the local effective preview, but policy

@@ -123,9 +123,6 @@
   let viewTop = $state(0);
   let viewSize = $state(1);
 
-  const DEL_COLOR = 'rgba(248, 113, 113, 0.85)';
-  const ADD_COLOR = 'rgba(52, 211, 153, 0.85)';
-
   function drawMinimap() {
     const wrap = minimapEl;
     const canvas = canvasEl;
@@ -140,6 +137,10 @@
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(canvas);
+    const delColor = css.getPropertyValue('--deny').trim() || 'red';
+    const addColor = css.getPropertyValue('--allow').trim() || 'green';
+    ctx.globalAlpha = 0.85;
 
     const items = display;
     const total = items.length || 1;
@@ -152,11 +153,11 @@
       const r = it.row;
       const y = idx * unit;
       if (r.type === 'del' || r.type === 'mod') {
-        ctx.fillStyle = DEL_COLOR;
+        ctx.fillStyle = delColor;
         ctx.fillRect(0, y, r.type === 'mod' ? half : w, barH);
       }
       if (r.type === 'add' || r.type === 'mod') {
-        ctx.fillStyle = ADD_COLOR;
+        ctx.fillStyle = addColor;
         ctx.fillRect(r.type === 'mod' ? half : 0, y, r.type === 'mod' ? half : w, barH);
       }
     });
@@ -228,9 +229,12 @@
     });
     ro.observe(el);
     if (wrap) ro.observe(wrap);
+    const themeObserver = new MutationObserver(() => drawMinimap());
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => {
       el.removeEventListener('scroll', onScroll);
       ro.disconnect();
+      themeObserver.disconnect();
     };
   });
 </script>
@@ -265,8 +269,8 @@
     <!-- Single scroll container → both sides scroll together (Beyond Compare). -->
     <div class="scroll" id={scrollId} bind:this={scrollEl}>
       <div class="grid" style="grid-template-columns: {cols}">
-        <div class="hcell h-before" style="grid-column: 1 / {afterStart}">Before</div>
-        <div class="hcell h-after sep" style="grid-column: {afterStart} / -1">After</div>
+        <div class="hcell h-before" style="grid-column: 1 / {afterStart}">변경 전</div>
+        <div class="hcell h-after sep" style="grid-column: {afterStart} / -1">변경 후</div>
 
         {#each display as d, i (i)}
           {#if d.kind === 'gap'}
@@ -336,10 +340,12 @@
     margin-left: 0.5rem;
   }
   .sw.del {
-    background: rgba(248, 113, 113, 0.85);
+    background: var(--deny);
+    opacity: 0.85;
   }
   .sw.add {
-    background: rgba(52, 211, 153, 0.85);
+    background: var(--allow);
+    opacity: 0.85;
   }
   .body {
     display: flex;
@@ -354,7 +360,7 @@
     cursor: pointer;
   }
   .minimap:focus-visible {
-    outline: 2px solid var(--accent-strong);
+    outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
   .minimap canvas {
@@ -375,7 +381,7 @@
     flex: 1;
     min-width: 0;
     overflow: auto;
-    max-height: 45vh;
+    max-height: clamp(12rem, calc(90vh - 16rem), 60vh);
   }
   .grid {
     display: grid;
@@ -394,8 +400,7 @@
     border-bottom: 1px solid var(--border);
     font-size: 0.68rem;
     font-weight: 700;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
   .h-before {
     color: var(--deny);
@@ -427,10 +432,10 @@
     background: var(--allow-soft);
   }
   .tx.hl-del {
-    box-shadow: inset 2px 0 0 rgba(248, 113, 113, 0.6);
+    box-shadow: inset 2px 0 0 var(--deny);
   }
   .tx.hl-add {
-    box-shadow: inset 2px 0 0 rgba(52, 211, 153, 0.6);
+    box-shadow: inset 2px 0 0 var(--allow);
   }
   /* A side with no corresponding line — render a faint placeholder. */
   .empty {

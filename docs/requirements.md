@@ -1,5 +1,8 @@
 # Agent Guard 요구사항서
 
+> 이 문서는 초기 요구사항의 기록입니다. 추천 일괄 적용, 보안 프로필, 위험 점수, 규칙 없음=Ask, defaultMode 제거에 관한 내용은 현재 동작으로 사용하지 않습니다.
+> 현재 계약은 [경로 후보 검토](risk-scanner.md), [명시 규칙 비교](effective-policy.md), [사용자 가이드](user-guide.md)를 따릅니다.
+
 > **Agent Guard**는 Claude Code를 시작으로, 로컬 AI 코딩 에이전트가 프로젝트 내에서 접근할 수 있는 파일·폴더·도구·환경 설정 범위를 안전하게 관리하는 Windows용 로컬 GUI 도구이다.
 
 - 문서 버전: v0.1

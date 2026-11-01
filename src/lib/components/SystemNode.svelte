@@ -1,22 +1,24 @@
 <script lang="ts">
   // One row of the all-drives explorer. Lazy-loads children on expand and shows
   // the explicit rule badge for this path's pattern in the given scope.
-  import { listSystemDir, type ScopeName, type SystemEntry } from '$lib/ipc';
+  import { effectiveFor, listSystemDir, type ScopeName, type SystemEntry, type Tool } from '$lib/ipc';
   import { app } from '$lib/state.svelte';
   import { knownDescription } from '$lib/describe';
-  import { effectiveDisplay, type EffectiveDisplay } from '$lib/match';
+  import { type EffectiveDisplay } from '$lib/match';
   import { tooltip } from '$lib/tooltip';
   import Self from './SystemNode.svelte';
 
   let {
     entry,
     scope,
+    pathTool = 'Read',
     selectedPath,
     onselect,
     oncontext
   }: {
     entry: SystemEntry;
     scope: ScopeName;
+    pathTool?: Tool;
     selectedPath: string;
     onselect: (e: SystemEntry) => void;
     oncontext: (e: SystemEntry, x: number, y: number) => void;
@@ -60,22 +62,33 @@
 
   // Effective access for this path — explicit rule, ancestor-inherited rule,
   // or the scope default. Colors the name so inheritance is visible.
-  const eff = $derived(effectiveDisplay(app.scoped[scope].rules, entry.pattern));
+  let eff = $state<EffectiveDisplay>({ state: 'none', source: null });
+  $effect(() => {
+    const scoped = $state.snapshot(app.scoped);
+    const path = entry.pattern;
+    const tool = pathTool;
+    let cancelled = false;
+    eff = { state: 'none', source: null };
+    effectiveFor(scoped, path, '', tool).then((result) => {
+      if (!cancelled) eff = { state: result.effective ?? 'none', source: result.sourceScope };
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  });
   const inherited = $derived(
-    !!eff.source && eff.source !== entry.pattern && eff.source !== entry.pattern + '/**'
+    !!eff.source && !rule
   );
 
   function stateLine(e: EffectiveDisplay, inh: boolean): string {
-    const from = inh ? ` — 상위 규칙 ${e.source} 상속` : '';
+    const from = inh ? ` — 출처: ${e.source}` : '';
     switch (e.state) {
       case 'allow':
-        return `지금 상태: 접근 가능${from}`;
+        return `${pathTool}: 일치한 Allow 규칙${from}`;
       case 'ask':
-        return `지금 상태: 접근할 때마다 확인${from}`;
+        return `${pathTool}: 일치한 Ask 규칙${from}`;
       case 'deny':
-        return `지금 상태: 차단됨${from}`;
+        return `${pathTool}: 일치한 Deny 규칙${from}`;
       default:
-        return '지금 상태: 규칙 없음 — 기본 동작 (필요할 때 확인)';
+        return `${pathTool}: 일치 규칙 없음 또는 판정 불가 — 실제 승인은 실행 환경에 따라 달라집니다`;
     }
   }
 
@@ -84,17 +97,26 @@
     const known = knownDescription(entry.pattern);
     if (known) lines.push(known);
     lines.push(stateLine(eff, inherited));
+    lines.push('명시 규칙의 근사 비교이며 실제 실행 결과를 보장하지 않습니다.');
     return lines.join('\n');
   });
 </script>
 
-<div class="node">
+<div
+  class="node"
+  role="treeitem"
+  aria-label={entry.name}
+  aria-selected={selected}
+  aria-expanded={entry.isDir ? expanded : undefined}
+>
   <div class="row" class:selected>
     <button
       class="twist"
       class:hidden={!entry.isDir}
       class:open={expanded}
-      aria-label={expanded ? '접기' : '펼치기'}
+      aria-label={`${entry.name} ${expanded ? '접기' : '펼치기'}`}
+      aria-hidden={entry.isDir ? undefined : 'true'}
+      tabindex={entry.isDir ? undefined : -1}
       onclick={toggle}
     >
       <svg viewBox="0 0 16 16" width="11" height="11" fill="none" aria-hidden="true">
@@ -128,8 +150,8 @@
         {/if}
       </span>
       <span class="name e-{eff.state}">{entry.name}</span>
-      {#if rule}
-        <span class="badge b-{rule.policy}">{rule.policy.toUpperCase()}</span>
+      {#if rule && (!rule.tools || rule.tools.includes(pathTool))}
+        <span class="badge b-{rule.policy}">{pathTool}: {rule.policy.toUpperCase()}</span>
       {:else if inherited}
         <span class="inh i-{eff.state}" aria-hidden="true"></span>
       {/if}
@@ -137,7 +159,7 @@
   </div>
 
   {#if expanded}
-    <div class="children">
+    <div class="children" role="group">
       {#if loading}
         <div class="note">불러오는 중…</div>
       {:else if loadError}
@@ -147,7 +169,7 @@
           <div class="note">비어 있음</div>
         {:else}
           {#each children as child (child.path)}
-            <Self entry={child} {scope} {selectedPath} {onselect} {oncontext} />
+            <Self entry={child} {scope} {pathTool} {selectedPath} {onselect} {oncontext} />
           {/each}
         {/if}
       {/if}
@@ -166,7 +188,7 @@
     transition: background-color var(--t-fast);
   }
   .row:hover {
-    background: var(--bg-2);
+    background: var(--hover);
   }
   .row.selected {
     background: var(--accent-soft);
@@ -215,7 +237,7 @@
     flex-shrink: 0;
   }
   .icon.folder {
-    color: #8fb3f9;
+    color: var(--accent-text);
   }
   .name {
     min-width: 0;
@@ -268,17 +290,17 @@
   .b-allow {
     background: var(--allow-soft);
     color: var(--allow);
-    border: 1px solid rgba(52, 211, 153, 0.3);
+    border: 1px solid var(--allow-line);
   }
   .b-deny {
     background: var(--deny-soft);
     color: var(--deny);
-    border: 1px solid rgba(248, 113, 113, 0.3);
+    border: 1px solid var(--deny-line);
   }
   .b-ask {
     background: var(--ask-soft);
     color: var(--ask);
-    border: 1px solid rgba(251, 191, 36, 0.3);
+    border: 1px solid var(--ask-line);
   }
   .children {
     margin-left: 0.85rem;

@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { listDir, type DirEntry } from '$lib/ipc';
+  import { effectiveFor, listDir, type DirEntry, type Tool } from '$lib/ipc';
   import { app } from '$lib/state.svelte';
-  import { effectiveDisplay } from '$lib/match';
+  import type { EffectiveDisplay } from '$lib/match';
   import Self from './TreeNode.svelte';
 
   let {
     entry,
+    pathTool = 'Read',
     oncontext
   }: {
     entry: DirEntry;
-    oncontext?: (entry: DirEntry, x: number, y: number) => void;
+    pathTool?: Tool;
+    oncontext?: (entry: DirEntry, x: number, y: number, anchor: HTMLElement) => void;
   } = $props();
 
   // Right-click a row: select it and open the policy context menu (like the
@@ -19,73 +21,104 @@
     e.preventDefault();
     e.stopPropagation();
     app.selectedPath = entry.path;
-    oncontext(entry, e.clientX, e.clientY);
+    oncontext(entry, e.clientX, e.clientY, e.currentTarget as HTMLElement);
   }
 
   let expanded = $state(false);
   let children = $state<DirEntry[] | null>(null);
   let loading = $state(false);
+  let loadError = $state<string | null>(null);
+  const expandable = $derived(entry.isDir && !entry.excluded);
+
+  async function load() {
+    loading = true;
+    loadError = null;
+    try {
+      children = await listDir(app.projectRoot, entry.path);
+    } catch (e) {
+      loadError = String(e);
+    } finally {
+      loading = false;
+    }
+  }
 
   async function toggle() {
-    if (!entry.isDir || entry.excluded) return;
+    if (!expandable) return;
     expanded = !expanded;
-    if (expanded && children === null) {
-      loading = true;
-      try {
-        children = await listDir(app.projectRoot, entry.path);
-      } finally {
-        loading = false;
-      }
+    if (expanded && children === null) await load();
+  }
+
+  function onLabelKey(e: KeyboardEvent) {
+    if (!expandable) return;
+    if (e.key === 'ArrowRight' && !expanded) {
+      e.preventDefault();
+      toggle();
+    } else if (e.key === 'ArrowLeft' && expanded) {
+      e.preventDefault();
+      toggle();
     }
   }
 
   // Badge from an explicit rule on this exact path (deny > ask > allow across scopes),
   // else a scanner recommendation, else untracked.
   const badge = $derived.by(() => {
-    const scopes = [app.scoped.local, app.scoped.project, app.scoped.user];
+    const scopes = app.scoped.managed.enforceManagedOnly ? [app.scoped.managed] : [app.scoped.managed, app.scoped.local, app.scoped.project, app.scoped.user];
     let found: string | null = null;
     for (const p of ['deny', 'ask', 'allow'] as const) {
       for (const s of scopes) {
-        if (s.rules.some((r) => r.path === entry.path && r.policy === p)) {
+        if (s.rules.some((r) => r.path === entry.path && r.policy === p && (!r.tools || r.tools.includes(pathTool) || (pathTool === 'Edit' && p === 'deny' && r.tools.includes('Read'))))) {
           found = p;
           break;
         }
       }
       if (found) break;
     }
-    if (found) return { kind: found, label: found.toUpperCase() };
+    if (found) return { kind: found, label: `${pathTool}: ${found[0].toUpperCase()}${found.slice(1)}` };
     const scan = app.view?.scan;
-    if (scan?.denyCandidates.includes(entry.path)) return { kind: 'rec-deny', label: 'DENY?' };
-    if (scan?.allowCandidates.includes(entry.path)) return { kind: 'rec-allow', label: 'ALLOW?' };
+    if (scan?.denyCandidates.includes(entry.path)) return { kind: 'rec-deny', label: '검토 후보' };
+    if (scan?.allowCandidates.includes(entry.path)) return { kind: 'rec-allow', label: '작업 경로 후보' };
     return { kind: 'untracked', label: '' };
   });
 
   const selected = $derived(app.selectedPath === entry.path);
 
-  // Effective access coloring: all scopes' rules merged (deny > ask > allow),
-  // with folder rules inherited by children — same convention as the system
-  // explorer. Excluded dirs keep their dimmed style instead.
-  const eff = $derived.by(() => {
-    if (entry.excluded) return { state: 'none' as const, source: null };
-    const rules = [...app.scoped.local.rules, ...app.scoped.project.rules, ...app.scoped.user.rules];
-    return effectiveDisplay(rules, entry.path);
+  let eff = $state<EffectiveDisplay>({ state: 'none', source: null });
+  $effect(() => {
+    const scoped = $state.snapshot(app.scoped);
+    const path = entry.path;
+    const tool = pathTool;
+    const root = app.projectRoot;
+    let cancelled = false;
+    eff = { state: 'none', source: null };
+    if (!entry.excluded) effectiveFor(scoped, path, root, tool).then((result) => {
+      if (!cancelled) eff = { state: result.effective ?? 'none', source: result.sourceScope };
+    }).catch(() => {});
+    return () => { cancelled = true; };
   });
 </script>
 
-<div class="node" class:selected>
+<div
+  class="node"
+  class:selected
+  role="treeitem"
+  tabindex="-1"
+  aria-selected={selected}
+  aria-expanded={expandable ? expanded : undefined}
+>
   <div class="row">
     <button
       class="twist"
-      class:hidden={!entry.isDir || entry.excluded}
+      class:hidden={!expandable}
       class:open={expanded}
-      aria-label={expanded ? '접기' : '펼치기'}
+      tabindex="-1"
+      aria-label={`${entry.name} ${expanded ? '접기' : '펼치기'}`}
       onclick={toggle}
     >
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
         <path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </button>
-    <button class="label" onclick={() => (app.selectedPath = entry.path)} ondblclick={toggle} oncontextmenu={onContextMenu}>
+    <button class="label" onclick={() => (app.selectedPath = entry.path)} ondblclick={toggle} onkeydown={onLabelKey} oncontextmenu={onContextMenu}>
       <span class="icon e-{eff.state}" class:folder={entry.isDir} aria-hidden="true">
         {#if entry.isDir}
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
@@ -118,18 +151,23 @@
         >검색 제외</span>
       {/if}
       {#if badge.label}
-        <span class="badge b-{badge.kind}">{badge.label}</span>
+        <span class="chip badge b-{badge.kind}">{badge.label}</span>
       {/if}
     </button>
   </div>
 
   {#if expanded}
-    <div class="children">
+    <div class="children" role="group">
       {#if loading}
-        <div class="loading">…</div>
+        <div class="loading" role="status">불러오는 중…</div>
+      {:else if loadError}
+        <div class="load-error" role="alert">
+          <span class="truncate" title={loadError}>폴더를 열지 못했습니다</span>
+          <button class="btn btn-ghost btn-sm" onclick={load}>다시 시도</button>
+        </div>
       {:else if children}
         {#each children as child (child.path)}
-          <Self entry={child} {oncontext} />
+          <Self entry={child} {pathTool} {oncontext} />
         {/each}
       {/if}
     </div>
@@ -146,8 +184,11 @@
     border-radius: var(--r-sm);
     transition: background-color var(--t-fast);
   }
+  .node:focus {
+    outline: none;
+  }
   .row:hover {
-    background: var(--bg-2);
+    background: var(--hover);
   }
   .selected > .row {
     background: var(--accent-soft);
@@ -156,8 +197,11 @@
   .twist {
     display: grid;
     place-items: center;
-    width: 1.15rem;
-    height: 1.15rem;
+    width: 1.5rem;
+    height: 1.6rem;
+    flex-shrink: 0;
+    margin: -0.1rem 0 -0.1rem -0.2rem;
+    border-radius: var(--r-sm);
     color: var(--text-3);
     background: none;
     border: none;
@@ -185,7 +229,7 @@
     color: var(--text-1);
     cursor: pointer;
     text-align: left;
-    font-size: 0.84rem;
+    font-size: var(--fs-lg);
     padding: 0.14rem 0;
   }
   .icon {
@@ -195,7 +239,7 @@
     flex-shrink: 0;
   }
   .icon.folder {
-    color: #8fb3f9;
+    color: var(--accent-text);
   }
   .name {
     min-width: 0;
@@ -227,18 +271,28 @@
   }
   .loading {
     color: var(--text-3);
-    font-size: 0.8rem;
-    padding-left: 1rem;
+    font-size: var(--fs-sm);
+    padding: 0.15rem 0 0.15rem 1rem;
+  }
+  .load-error {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    color: var(--deny);
+    font-size: var(--fs-sm);
+    padding: 0.15rem 0 0.15rem 1rem;
   }
   /* Neutral gray on purpose: git-ignored means "invisible to search", NOT
      "blocked" — red is reserved for Deny. */
   .gitig {
     margin-left: auto;
-    font-size: 0.58rem;
+    font-size: var(--fs-xs);
     color: var(--text-3);
     border: 1px dashed var(--border-strong);
     border-radius: 999px;
     padding: 0.05rem 0.4rem;
+    white-space: nowrap;
     flex-shrink: 0;
   }
   .gitig + .badge {
@@ -246,36 +300,31 @@
   }
   .badge {
     margin-left: auto;
-    font-size: 0.6rem;
-    padding: 0.08rem 0.42rem;
-    border-radius: 999px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
     flex-shrink: 0;
   }
   .b-allow {
     background: var(--allow-soft);
     color: var(--allow);
-    border: 1px solid rgba(52, 211, 153, 0.3);
+    border-color: var(--allow-line);
   }
   .b-deny {
     background: var(--deny-soft);
     color: var(--deny);
-    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-color: var(--deny-line);
   }
   .b-ask {
     background: var(--ask-soft);
     color: var(--ask);
-    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-color: var(--ask-line);
   }
   .b-rec-deny {
     background: none;
     color: var(--deny);
-    border: 1px dashed rgba(248, 113, 113, 0.45);
+    border: 1px dashed var(--deny-line);
   }
   .b-rec-allow {
     background: none;
     color: var(--allow);
-    border: 1px dashed rgba(52, 211, 153, 0.45);
+    border: 1px dashed var(--allow-line);
   }
 </style>

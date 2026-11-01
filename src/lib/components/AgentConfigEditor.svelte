@@ -9,13 +9,13 @@
     inTauri,
     readAgentConfig,
     saveAgentConfig,
-    securityBaseline,
     validateConfig
   } from '$lib/ipc';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
   import AgentSettingsForm from '$lib/components/AgentSettingsForm.svelte';
   import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
   import { modalFocus } from '$lib/modal';
+  import { toast } from '$lib/toast.svelte';
 
   let { agent }: { agent: AgentGlobal } = $props();
 
@@ -24,7 +24,6 @@
   let loading = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
-  let status = $state<string | null>(null);
   let diff = $state<DiffView | null>(null);
   let secItems = $state<AgentSecItem[] | null>(null);
   let view = $state<'form' | 'raw'>('form');
@@ -48,7 +47,6 @@
     if (!inTauri()) return;
     loading = true;
     error = null;
-    status = null;
     try {
       onDisk = await readAgentConfig(agent.id);
       text = onDisk;
@@ -67,18 +65,14 @@
 
   async function validate() {
     error = await validateConfig(text, agent.format);
-    status = error ? null : '유효합니다.';
+    if (!error) toast(`유효한 ${agent.format.toUpperCase()}입니다`);
   }
 
   function format() {
-    if (agent.format !== 'json') {
-      status = 'TOML은 자동 포맷을 지원하지 않습니다.';
-      return;
-    }
     try {
       text = JSON.stringify(JSON.parse(text || '{}'), null, 2) + '\n';
       error = null;
-      status = '포맷 완료';
+      toast('JSON을 정렬했습니다');
     } catch (e) {
       error = String(e);
     }
@@ -86,24 +80,12 @@
 
   async function openSaveDialog() {
     error = null;
-    status = null;
     const v = await validateConfig(text, agent.format);
     if (v) {
       error = v;
       return;
     }
     diff = { path: agent.path, before: onDisk, after: text, changed: onDisk !== text };
-  }
-
-  // Merge this agent's security baseline into the editor for review.
-  async function applyBaseline() {
-    error = null;
-    try {
-      text = await securityBaseline(agent.id, text);
-      status = '보안 베이스라인을 추가했습니다. 검토 후 저장하세요.';
-    } catch (e) {
-      error = String(e);
-    }
   }
 
   async function confirmSave() {
@@ -115,7 +97,7 @@
         agentId: agent.id
       });
       onDisk = text;
-      status = `저장됨 → ${res.written}${res.backup ? ` (백업: ${res.backup})` : ''}`;
+      toast(`저장했습니다 → ${res.written}${res.backup ? ` (백업: ${res.backup})` : ''}`);
       diff = null;
     } catch (e) {
       error = String(e);
@@ -131,26 +113,23 @@
 
 <div class="panel">
   <div class="bar">
-    <span class="views">
-      <button class:active={view === 'form'} onclick={() => (view = 'form')}>설정</button>
-      <button class:active={view === 'raw'} onclick={() => (view = 'raw')}>
+    <div class="segmented" role="tablist" aria-label="편집 보기">
+      <button role="tab" aria-selected={view === 'form'} onclick={() => (view = 'form')}>설정</button>
+      <button role="tab" aria-selected={view === 'raw'} onclick={() => (view = 'raw')}>
         Raw {agent.format.toUpperCase()}
       </button>
-    </span>
+    </div>
     <div class="tools">
-      <button class="rec" onclick={applyBaseline} title="권장 보안 설정(공유·웹·자격증명 차단)을 현재 설정에 병합">
-        보안 베이스라인
-      </button>
-      <button onclick={validate}>Validate</button>
-      {#if agent.format === 'json'}<button onclick={format}>Format</button>{/if}
-      <button class="primary" class:dirty onclick={openSaveDialog} disabled={!dirty}>
-        {dirty ? '● 저장…' : '저장됨'}
+      <button class="btn btn-sm" onclick={validate}>검사</button>
+      {#if agent.format === 'json'}<button class="btn btn-sm" onclick={format}>정렬</button>{/if}
+      <button class="btn btn-sm" class:btn-primary={dirty} onclick={openSaveDialog} disabled={!dirty}>
+        {dirty ? '저장…' : '저장됨'}
       </button>
     </div>
   </div>
 
   {#if !agent.exists}
-    <p class="new">이 파일은 아직 없습니다. 저장하면 새로 생성됩니다.</p>
+    <p class="callout callout-warn new">이 파일은 아직 없습니다. 저장하면 새로 생성됩니다.</p>
   {/if}
 
   {#if secItems}
@@ -173,11 +152,10 @@
   {:else if view === 'form'}
     <AgentSettingsForm agentId={agent.id} format={agent.format} {text} onchange={(t) => (text = t)} />
   {:else}
-    <textarea bind:value={text} spellcheck="false" placeholder={agent.format === 'toml' ? '# TOML' : '{}'}></textarea>
+    <textarea class="input" bind:value={text} spellcheck="false" placeholder={agent.format === 'toml' ? '# TOML' : '{}'}></textarea>
   {/if}
 
-  {#if error}<p class="err" role="alert">오류: {error}</p>{/if}
-  {#if status}<p class="ok" role="status">{status}</p>{/if}
+  {#if error}<p class="callout callout-error err" role="alert">{error}</p>{/if}
 </div>
 
 {#if diff}
@@ -219,25 +197,8 @@
     gap: 0.5rem;
     margin-bottom: 0.5rem;
   }
-  .views {
-    display: flex;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
-    overflow: hidden;
-  }
-  .views button {
-    background: transparent;
-    border: none;
-    color: var(--text-2);
-    padding: 0.3rem 0.7rem;
-    cursor: pointer;
-    font-size: 0.76rem;
-    white-space: nowrap;
-    transition: background-color var(--t-fast), color var(--t-fast);
-  }
-  .views button.active {
-    background: var(--accent-soft);
-    color: var(--accent-text);
+  .segmented {
+    flex-shrink: 0;
   }
   .tools {
     display: flex;
@@ -246,28 +207,8 @@
     max-width: 100%;
     overflow-x: auto;
   }
-  .tools button {
+  .tools .btn {
     flex-shrink: 0;
-    padding: 0.3rem 0.7rem;
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    color: var(--text-1);
-    border-radius: var(--r-sm);
-    cursor: pointer;
-    font-size: 0.78rem;
-    transition: background-color var(--t-fast), border-color var(--t-fast);
-  }
-  .tools button:hover:not(:disabled) {
-    background: var(--bg-3);
-  }
-  .tools .rec {
-    background: var(--allow-soft);
-    border-color: rgba(52, 211, 153, 0.35);
-    color: var(--allow);
-    font-weight: 600;
-  }
-  .tools .rec:hover {
-    background: rgba(52, 211, 153, 0.22);
   }
   .sec {
     display: flex;
@@ -291,7 +232,7 @@
   .sec-item.safe {
     color: var(--allow);
     background: var(--allow-soft);
-    border-color: rgba(52, 211, 153, 0.3);
+    border-color: var(--allow-line);
   }
   .sec-item.safe b {
     color: inherit;
@@ -299,65 +240,24 @@
   .sec-item.warn {
     color: var(--ask);
     background: var(--ask-soft);
-    border-color: rgba(251, 191, 36, 0.35);
+    border-color: var(--ask-line);
   }
   .sec-item.warn b {
     color: inherit;
   }
-  .tools .primary {
-    background: var(--bg-2);
-    color: var(--text-3);
-    font-weight: 600;
-  }
-  .tools .primary.dirty {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-    color: white;
-    box-shadow: 0 2px 12px rgba(37, 99, 235, 0.3);
-  }
-  .tools .primary:disabled {
-    cursor: default;
-  }
   .new {
-    color: var(--ask);
-    background: var(--ask-soft);
-    border-radius: var(--r-sm);
-    padding: 0.35rem 0.6rem;
-    font-size: 0.78rem;
     margin: 0 0 0.5rem;
   }
   textarea {
     flex: 1;
-    width: 100%;
-    box-sizing: border-box;
     resize: none;
-    background: var(--bg-1);
-    color: var(--text-1);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
     padding: 0.6rem;
     font-family: var(--font-mono);
-    font-size: 0.8rem;
     line-height: 1.5;
-    transition: border-color var(--t-fast);
-  }
-  textarea:focus {
-    border-color: var(--accent);
-    outline: none;
-  }
-  .muted {
-    color: var(--text-3);
   }
   .err {
-    color: var(--deny);
-    font-size: 0.8rem;
-    margin: 0.4rem 0 0;
-  }
-  .ok {
-    color: var(--allow);
-    font-size: 0.8rem;
+    margin-top: 0.4rem;
     word-break: break-all;
-    margin: 0.4rem 0 0;
   }
   .fp {
     color: var(--text-3);

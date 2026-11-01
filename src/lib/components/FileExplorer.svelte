@@ -1,50 +1,99 @@
 <script lang="ts">
-  import type { DirEntry, Policy } from '$lib/ipc';
+  import type { DirEntry, Policy, Tool } from '$lib/ipc';
+  import { tick } from 'svelte';
   import { app, clearPolicy, refreshEffective, setPolicy } from '$lib/state.svelte';
   import TreeNode from './TreeNode.svelte';
 
+  let pathTool = $state<Tool>('Read');
   let menu = $state<{ entry: DirEntry; x: number; y: number } | null>(null);
+  let menuEl = $state<HTMLDivElement | null>(null);
+  let menuAnchor: HTMLElement | null = null;
 
   // The explicit rule on this exact path in the active scope, if any.
   function ruleFor(entry: DirEntry) {
     return app.scoped[app.activeScope].rules.find((r) => r.path === entry.path);
   }
 
-  async function applyTo(entry: DirEntry, policy: Policy) {
+  function closeMenu(restoreFocus = false) {
+    if (!menu) return;
     menu = null;
+    if (restoreFocus) menuAnchor?.focus();
+    menuAnchor = null;
+  }
+
+  async function applyTo(entry: DirEntry, policy: Policy) {
+    closeMenu(true);
     setPolicy(entry.path, policy, entry.isDir ? 'folder-and-children' : 'file');
     await refreshEffective();
   }
 
   async function clearFor(entry: DirEntry) {
-    menu = null;
+    closeMenu(true);
     clearPolicy(entry.path);
     await refreshEffective();
   }
 
   // Right-click on a tree row: open the policy context menu, clamped to viewport.
-  function openMenu(entry: DirEntry, x: number, y: number) {
+  async function openMenu(entry: DirEntry, x: number, y: number, anchor: HTMLElement) {
     const mw = 210;
     const mh = 200;
+    if (x === 0 && y === 0) {
+      const r = anchor.getBoundingClientRect();
+      x = r.left + 24;
+      y = r.bottom;
+    }
+    menuAnchor = anchor;
     menu = {
       entry,
       x: Math.max(8, Math.min(x, window.innerWidth - mw - 8)),
       y: Math.max(8, Math.min(y, window.innerHeight - mh - 8))
     };
+    await tick();
+    menuEl?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }
+
+  function onMenuKey(e: KeyboardEvent) {
+    if (!menuEl) return;
+    const items = Array.from(menuEl.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'));
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+      items[next]?.focus();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      closeMenu(true);
+    }
+  }
+
+  function onWindowKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && menu) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu(true);
+    }
   }
 </script>
 
 <div class="panel">
   <div class="head">
-    <span class="ptitle">{app.projectName || 'Files'}</span>
-    <button class="root" class:active={app.selectedPath === ''} onclick={() => (app.selectedPath = '')}>
+    <span class="ptitle truncate">{app.projectName || '파일'}</span>
+    <label class="tool-pick">규칙 색상 <select class="input" bind:value={pathTool}><option value="Read">Read</option><option value="Edit">Edit</option></select></label>
+    <button
+      class="btn btn-sm root"
+      class:active={app.selectedPath === ''}
+      aria-pressed={app.selectedPath === ''}
+      aria-label="/ root 선택"
+      onclick={() => (app.selectedPath = '')}
+    >
       / root
     </button>
   </div>
-  <div class="tree">
+  <p class="note">색상은 선택한 도구의 명시 규칙 비교입니다. 실행 결과는 보장하지 않습니다.</p>
+  <div class="tree" role="tree" aria-label="프로젝트 파일">
     {#if app.view}
       {#each app.view.tree as entry (entry.path)}
-        <TreeNode {entry} oncontext={openMenu} />
+        <TreeNode {entry} {pathTool} oncontext={openMenu} />
       {/each}
     {:else}
       <p class="muted">프로젝트가 열려 있지 않습니다.</p>
@@ -53,15 +102,23 @@
 </div>
 
 <svelte:window
-  onclick={() => (menu = null)}
-  oncontextmenu={() => (menu = null)}
-  onkeydown={(e) => e.key === 'Escape' && (menu = null)}
+  onclick={() => closeMenu()}
+  oncontextmenu={() => closeMenu()}
+  onkeydown={onWindowKey}
 />
 
 {#if menu}
   {@const m = menu}
   {@const mRule = ruleFor(m.entry)}
-  <div class="ctx" style="left: {m.x}px; top: {m.y}px" role="menu" aria-label="정책 지정">
+  <div
+    class="ctx"
+    style="left: {m.x}px; top: {m.y}px"
+    role="menu"
+    tabindex="-1"
+    aria-label="정책 지정"
+    bind:this={menuEl}
+    onkeydown={onMenuKey}
+  >
     <div class="ctx-head">
       <span class="ctx-name">{m.entry.name || '(project root)'}</span>
       <code class="ctx-pat">{m.entry.path}<span class="ctx-scope">{app.activeScope}</span></code>
@@ -97,51 +154,58 @@
   }
   .head {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.55rem 0.7rem;
+    min-height: 2.6rem;
+    box-sizing: border-box;
+    padding: 0.4rem 0.7rem;
     border-bottom: 1px solid var(--border);
-    font-size: 0.8rem;
+    font-size: var(--fs-md);
+    flex-shrink: 0;
   }
   .ptitle {
+    flex: 1;
     font-weight: 600;
-    letter-spacing: 0.02em;
     color: var(--text-2);
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  }
+  .tool-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-3);
+    font-size: var(--fs-sm);
     white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tool-pick .input {
+    width: auto;
+    padding: 0.18rem 0.4rem;
+    font-size: var(--fs-sm);
   }
   .root {
-    font-size: 0.7rem;
     font-family: var(--font-mono);
-    background: none;
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: 4px;
-    padding: 0.12rem 0.45rem;
-    cursor: pointer;
     flex-shrink: 0;
-    transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
-  }
-  .root:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
   }
   .root.active {
-    border-color: rgba(79, 142, 247, 0.45);
+    border-color: var(--accent-line);
     background: var(--accent-soft);
     color: var(--accent-text);
   }
+  .note {
+    margin: 0;
+    padding: 0.35rem 0.7rem;
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+    line-height: 1.45;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
   .tree {
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 0.4rem;
     flex: 1;
-  }
-  .muted {
-    color: var(--text-3);
-    font-size: 0.85rem;
+    min-height: 0;
   }
 
   /* Right-click policy menu (fixed — escapes panel clipping). */
@@ -163,7 +227,7 @@
   }
   .ctx-name {
     display: block;
-    font-size: 0.78rem;
+    font-size: var(--fs-md);
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -174,7 +238,7 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.66rem;
+    font-size: var(--fs-xs);
     color: var(--text-3);
     word-break: break-all;
     margin-top: 0.1rem;
@@ -182,7 +246,7 @@
   .ctx-scope {
     margin-left: auto;
     flex-shrink: 0;
-    font-size: 0.62rem;
+    font-size: var(--fs-xs);
     color: var(--accent-text);
     background: var(--accent-soft);
     border-radius: 999px;
@@ -201,11 +265,13 @@
     cursor: pointer;
     text-align: left;
     color: var(--text-1);
-    font-size: 0.8rem;
+    font-size: var(--fs-md);
     transition: background-color var(--t-fast);
   }
-  .ctx-item:hover:not(:disabled) {
+  .ctx-item:hover:not(:disabled),
+  .ctx-item:focus-visible {
     background: var(--bg-3);
+    outline: none;
   }
   .ctx-item:disabled {
     opacity: 0.4;
@@ -238,7 +304,7 @@
     line-height: 1.25;
   }
   .ctx-sub {
-    font-size: 0.68rem;
+    font-size: var(--fs-xs);
     font-weight: 400;
     color: var(--text-3);
   }

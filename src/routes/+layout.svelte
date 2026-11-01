@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
   import { initTheme } from '$lib/theme.svelte';
+  import Toaster from '$lib/components/Toaster.svelte';
   import {
     confirmDiscardChanges,
     hasUnsavedChanges,
@@ -59,6 +60,7 @@
 <div class="app">
   {@render children()}
 </div>
+<Toaster />
 
 <style>
   .app {

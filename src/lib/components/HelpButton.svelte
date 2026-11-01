@@ -14,7 +14,7 @@
   }
 </script>
 
-<button class="help" class:compact onclick={open} {title} aria-label={title}>
+<button class="help" class:compact onclick={open} {title} aria-label={compact ? title : undefined}>
   <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
     <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
     <path
@@ -33,13 +33,15 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+    flex-shrink: 0;
+    white-space: nowrap;
     background: var(--bg-1);
     border: 1px solid var(--border-strong);
     color: var(--text-2);
     border-radius: 999px;
     padding: 0.34rem 0.8rem;
     cursor: pointer;
-    font-size: 0.76rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
     transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
   }
@@ -54,5 +56,6 @@
     height: 1.85rem;
     justify-content: center;
     gap: 0;
+    border-radius: var(--r-sm);
   }
 </style>

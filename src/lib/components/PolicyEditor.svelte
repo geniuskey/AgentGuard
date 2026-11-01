@@ -9,6 +9,7 @@
   } from '$lib/ipc';
   import { app, clearPolicy, refreshEffective, upsertRule } from '$lib/state.svelte';
   import { buildPolicyRule } from '$lib/policy-rule';
+  import { toast } from '$lib/toast.svelte';
 
   let appliesTo = $state<AppliesTo>('folder-and-children');
   let reason = $state('');
@@ -17,17 +18,14 @@
   let useRead = $state(true);
   let useEdit = $state(true);
 
-  const target = $derived(app.selectedPath || '(project root)');
-
   // Git-ignored paths need a heads-up: an Allow rule opens access, but the
   // agent's Grep search still skips them.
   let ignored = $state(false);
-  let noteStatus = $state<string | null>(null);
+  let noting = $state(false);
 
   $effect(() => {
     const p = app.selectedPath;
     ignored = false;
-    noteStatus = null;
     if (!p || !inTauri()) return;
     pathIgnored(app.projectRoot, p)
       .then((v) => (ignored = v))
@@ -35,13 +33,19 @@
   });
 
   async function noteInClaudeMd() {
+    noting = true;
     try {
       const added = await noteIgnoredPath(app.projectRoot, app.selectedPath);
-      noteStatus = added
-        ? 'CLAUDE.md에 안내를 추가했습니다 — 에이전트가 이 경로를 인지합니다.'
-        : 'CLAUDE.md에 이미 안내가 있습니다.';
+      toast(
+        added
+          ? 'CLAUDE.md에 안내를 추가했습니다 — 에이전트가 이 경로를 인지합니다.'
+          : 'CLAUDE.md에 이미 안내가 있습니다.',
+        added ? 'ok' : 'info'
+      );
     } catch (e) {
-      noteStatus = String(e);
+      toast(String(e), 'error');
+    } finally {
+      noting = false;
     }
   }
 
@@ -49,6 +53,8 @@
   const current = $derived(
     app.scoped[app.activeScope].rules.find((r) => r.path === app.selectedPath)
   );
+  const hasSavedDetails = $derived(!!(current?.reason || current?.notes || current?.riskLevel));
+  const noTool = $derived(!useRead && !useEdit);
 
   $effect(() => {
     const rule = current;
@@ -62,7 +68,7 @@
   });
 
   async function apply(policy: Policy) {
-    if (!app.selectedPath || (!useRead && !useEdit)) return;
+    if (!app.selectedPath || noTool) return;
     const rule = buildPolicyRule({
       path: app.selectedPath,
       policy,
@@ -79,89 +85,129 @@
   }
 
   async function clear() {
-    if (!app.selectedPath) return;
+    if (!app.selectedPath || !current) return;
+    const removed = $state.snapshot(current);
+    const scope = app.activeScope;
     clearPolicy(app.selectedPath);
     await refreshEffective();
+    toast(`규칙을 지웠습니다 — ${removed.path}`, 'info', {
+      label: '되돌리기',
+      run: () => {
+        upsertRule(scope, removed);
+        refreshEffective();
+      }
+    });
   }
 
-  const scopes: ScopeName[] = ['project', 'local'];
+  const scopes: { id: ScopeName; label: string }[] = [
+    { id: 'project', label: '프로젝트' },
+    { id: 'local', label: '로컬' }
+  ];
+
+  const decisions: { policy: Policy; label: string; key: string }[] = [
+    { policy: 'allow', label: 'Allow', key: 'A' },
+    { policy: 'ask', label: 'Ask', key: 'K' },
+    { policy: 'deny', label: 'Deny', key: 'D' }
+  ];
 </script>
 
 <div class="panel">
-  <h3>Policy Editor</h3>
+  <h3 class="label-caps">정책 편집</h3>
 
-  <div class="field">
-    <span>Path</span>
-    <code class="target">{target}</code>
-  </div>
+  {#if !app.selectedPath}
+    <div class="empty">
+      <p>왼쪽 트리에서 파일이나 폴더를 선택하세요.</p>
+      <p class="muted">선택한 경로에 Allow / Ask / Deny 규칙을 지정할 수 있습니다. 단축키 A · K · D.</p>
+    </div>
+  {:else}
+    <div class="head">
+      <span class="label-caps">경로</span>
+      <code class="target">{app.selectedPath}</code>
+      <div class="status">
+        <span class="label-caps">현재 상태(이 범위)</span>
+        {#if current}
+          <span class="chip chip-{current.policy}">{current.policy[0].toUpperCase() + current.policy.slice(1)}</span>
+        {:else}
+          <span class="chip chip-none">추적 안 됨</span>
+        {/if}
+      </div>
+    </div>
 
-  <div class="field">
-    <span>Scope</span>
-    <div class="segmented">
-      {#each scopes as s (s)}
-        <button class:active={app.activeScope === s} onclick={() => (app.activeScope = s)}>{s}</button>
+    <div class="decide" role="group" aria-label="정책 결정">
+      {#each decisions as d (d.policy)}
+        <button
+          class="btn decision d-{d.policy}"
+          aria-pressed={current?.policy === d.policy}
+          aria-keyshortcuts={d.key}
+          onclick={() => apply(d.policy)}
+          disabled={noTool}
+        >
+          {d.label} <kbd>{d.key}</kbd>
+        </button>
       {/each}
     </div>
-  </div>
+    <button class="btn btn-ghost btn-sm clear" onclick={clear} disabled={!current}>규칙 지우기</button>
 
-  <label class="field">
-    <span>Applies to</span>
-    <select bind:value={appliesTo} disabled={!app.selectedPath}>
-      <option value="file">This file only</option>
-      <option value="folder">This folder only</option>
-      <option value="folder-and-children">This folder and children</option>
-      <option value="pattern">Matching pattern</option>
-    </select>
-  </label>
+    <div class="field">
+      <span class="label-caps" id="pe-scope">범위</span>
+      <div class="segmented" role="group" aria-labelledby="pe-scope">
+        {#each scopes as s (s.id)}
+          <button aria-pressed={app.activeScope === s.id} onclick={() => (app.activeScope = s.id)}>{s.label}</button>
+        {/each}
+      </div>
+    </div>
 
-  <fieldset class="field tools-field" disabled={!app.selectedPath}>
-    <legend>적용 도구</legend>
-    <label><input type="checkbox" bind:checked={useRead} /> Read</label>
-    <label><input type="checkbox" bind:checked={useEdit} /> Edit</label>
-    {#if !useRead && !useEdit}<small>도구를 하나 이상 선택하세요.</small>{/if}
-  </fieldset>
+    <label class="field">
+      <span class="label-caps">적용 대상</span>
+      <select class="input" bind:value={appliesTo}>
+        <option value="file">이 파일만</option>
+        <option value="folder">이 폴더만</option>
+        <option value="folder-and-children">이 폴더와 하위</option>
+        <option value="pattern">패턴 일치</option>
+      </select>
+    </label>
 
-  <label class="field">
-    <span>사유</span>
-    <input bind:value={reason} disabled={!app.selectedPath} placeholder="예: 소스 코드 작업에 필요" />
-  </label>
+    <fieldset class="field tools-field">
+      <legend class="label-caps">적용 도구</legend>
+      <label><input type="checkbox" bind:checked={useRead} /> Read</label>
+      <label><input type="checkbox" bind:checked={useEdit} /> Edit</label>
+      {#if noTool}<small role="alert">도구를 하나 이상 선택하세요.</small>{/if}
+    </fieldset>
 
-  <label class="field">
-    <span>위험도</span>
-    <select bind:value={riskLevel} disabled={!app.selectedPath}>
-      <option value="">지정 안 함</option>
-      <option value="low">낮음</option>
-      <option value="medium">중간</option>
-      <option value="high">높음</option>
-    </select>
-  </label>
+    <details class="more" open={hasSavedDetails}>
+      <summary>세부 정보 (선택)</summary>
+      <label class="field">
+        <span class="label-caps">사유</span>
+        <input class="input" bind:value={reason} placeholder="예: 소스 코드 작업에 필요" />
+      </label>
+      <label class="field">
+        <span class="label-caps">위험도</span>
+        <select class="input" bind:value={riskLevel}>
+          <option value="">지정 안 함</option>
+          <option value="low">낮음</option>
+          <option value="medium">중간</option>
+          <option value="high">높음</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="label-caps">메모</span>
+        <textarea class="input" bind:value={notes} rows="2" placeholder="팀 또는 개인 참고 사항"></textarea>
+      </label>
+      <p class="muted small">세부 정보는 Allow / Ask / Deny 를 다시 누르면 규칙에 반영됩니다.</p>
+    </details>
 
-  <label class="field">
-    <span>메모</span>
-    <textarea bind:value={notes} disabled={!app.selectedPath} rows="2" placeholder="팀 또는 개인 참고 사항"></textarea>
-  </label>
-
-  <div class="field">
-    <span>Current (this scope)</span>
-    {#if current}
-      <span class="cur cur-{current.policy}">{current.policy.toUpperCase()}</span>
-    {:else}
-      <span class="cur cur-none">— untracked</span>
+    {#if ignored}
+      <div class="callout callout-warn ginote">
+        <b>.gitignore에 포함된 경로입니다.</b> 차단된 것은 아닙니다 —
+        Grep 검색으로는 <b>발견 못 함</b> · 경로를 알면 Read <b>가능</b> · 접근 권한은
+        Allow/Ask/Deny 규칙이 결정. CLAUDE.md에 경로를 알려주면 에이전트가 직접 읽거나
+        <code>rg --no-ignore</code>로 검색할 수 있습니다.
+        <button class="btn btn-sm gbtn" onclick={noteInClaudeMd} disabled={noting}>
+          {noting ? '추가 중…' : 'CLAUDE.md에 알리기'}
+        </button>
+      </div>
     {/if}
-  </div>
-
-  <div class="buttons">
-    <button class="allow" onclick={() => apply('allow')} disabled={!app.selectedPath || (!useRead && !useEdit)}>
-      Allow <kbd>A</kbd>
-    </button>
-    <button class="ask" onclick={() => apply('ask')} disabled={!app.selectedPath || (!useRead && !useEdit)}>
-      Ask <kbd>K</kbd>
-    </button>
-    <button class="deny" onclick={() => apply('deny')} disabled={!app.selectedPath || (!useRead && !useEdit)}>
-      Deny <kbd>D</kbd>
-    </button>
-    <button class="clear" onclick={clear} disabled={!current}>Clear rule</button>
-  </div>
+  {/if}
 
   <div class="boundary-note">
     <b>권한 경계</b>
@@ -169,221 +215,161 @@
     Read/Edit Deny는 Claude의 내장 파일 도구에는 적용되지만, 허용된 Bash·PowerShell 프로세스의
     OS 파일 접근까지 차단하지는 않습니다.
   </div>
-
-  {#if ignored}
-    <div class="ginote">
-      <b>.gitignore에 포함된 경로입니다.</b> 차단된 것은 아닙니다 —
-      Grep 검색으로는 <b>발견 못 함</b> · 경로를 알면 Read <b>가능</b> · 접근 권한은
-      Allow/Ask/Deny 규칙이 결정. CLAUDE.md에 경로를 알려주면 에이전트가 직접 읽거나
-      <code>rg --no-ignore</code>로 검색할 수 있습니다.
-      <button class="gbtn" onclick={noteInClaudeMd}>CLAUDE.md에 알리기</button>
-      {#if noteStatus}<span class="gstat">{noteStatus}</span>{/if}
-    </div>
-  {/if}
-
-  {#if !app.selectedPath}
-    <p class="hint">왼쪽 트리에서 파일/폴더를 선택하세요.</p>
-  {/if}
 </div>
 
 <style>
   .panel {
     padding: 0.85rem;
+    min-width: 0;
   }
   h3 {
-    margin: 0 0 0.9rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    margin: 0 0 0.75rem;
+  }
+  .empty {
+    padding: 1rem 0.2rem;
     color: var(--text-2);
+    font-size: var(--fs-md);
   }
-  .field {
-    display: block;
-    margin-bottom: 0.85rem;
+  .empty p {
+    margin: 0 0 0.4rem;
   }
-  .field > span {
-    display: block;
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-3);
-    margin-bottom: 0.3rem;
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-bottom: 0.7rem;
   }
   .target {
     background: var(--bg-1);
     border: 1px solid var(--border);
     padding: 0.3rem 0.5rem;
     border-radius: var(--r-sm);
-    font-size: 0.79rem;
+    font-size: var(--fs-md);
     display: block;
-    word-break: break-all;
+    overflow-wrap: anywhere;
     color: var(--text-1);
   }
-  select,
-  input,
-  textarea {
-    width: 100%;
-    padding: 0.45rem;
-    background: var(--bg-1);
-    color: var(--text-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
-    font-size: 0.84rem;
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
-  textarea {
+  .chip-none {
+    color: var(--text-3);
+    border-style: dashed;
+    background: transparent;
+  }
+  .decide {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
+  }
+  .decision {
+    font-weight: 600;
+    padding: 0.5rem 0.4rem;
+    min-width: 0;
+  }
+  .decision kbd {
+    font-size: 0.62rem;
+    padding: 0 0.3rem;
+    opacity: 0.7;
+  }
+  .d-allow {
+    color: var(--allow);
+    background: var(--allow-soft);
+    border-color: var(--allow-line);
+  }
+  .d-allow:hover:not(:disabled) {
+    background: var(--allow-soft-hover);
+  }
+  .d-ask {
+    color: var(--ask);
+    background: var(--ask-soft);
+    border-color: var(--ask-line);
+  }
+  .d-ask:hover:not(:disabled) {
+    background: var(--ask-soft-hover);
+  }
+  .d-deny {
+    color: var(--deny);
+    background: var(--deny-soft);
+    border-color: var(--deny-line);
+  }
+  .d-deny:hover:not(:disabled) {
+    background: var(--deny-soft-hover);
+  }
+  .d-allow[aria-pressed='true'] {
+    background: var(--allow);
+    border-color: var(--allow);
+    color: var(--on-policy);
+  }
+  .d-ask[aria-pressed='true'] {
+    background: var(--ask);
+    border-color: var(--ask);
+    color: var(--on-policy);
+  }
+  .d-deny[aria-pressed='true'] {
+    background: var(--deny);
+    border-color: var(--deny);
+    color: var(--on-policy);
+  }
+  .clear {
+    margin: 0.35rem 0 0.9rem auto;
+    display: flex;
+  }
+  .field {
+    display: block;
+    margin-bottom: 0.8rem;
+    min-width: 0;
+  }
+  .field > .label-caps {
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+  textarea.input {
     resize: vertical;
     font-family: inherit;
   }
   .tools-field {
     border: 0;
+    margin-inline: 0;
     padding: 0;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.8rem;
   }
   .tools-field legend {
-    color: var(--text-3);
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    padding: 0;
     margin-bottom: 0.3rem;
-    text-transform: uppercase;
   }
   .tools-field label {
     color: var(--text-2);
-    font-size: 0.76rem;
-  }
-  .tools-field input {
-    width: auto;
+    font-size: var(--fs-sm);
+    white-space: nowrap;
   }
   .tools-field small {
     color: var(--deny);
   }
-  select:disabled {
-    opacity: 0.5;
-  }
-  .segmented {
-    display: flex;
-    background: var(--bg-1);
+  .more {
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
-    padding: 0.18rem;
-    gap: 0.18rem;
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.8rem;
   }
-  .segmented button {
-    flex: 1;
-    padding: 0.32rem;
-    background: transparent;
-    border: none;
+  .more summary {
+    cursor: pointer;
     color: var(--text-2);
-    border-radius: 4px;
-    cursor: pointer;
-    text-transform: capitalize;
-    font-size: 0.8rem;
-    transition: background-color var(--t-fast), color var(--t-fast);
+    font-size: var(--fs-sm);
+    padding: 0.15rem 0;
   }
-  .segmented button:hover {
-    color: var(--text-1);
+  .more[open] summary {
+    margin-bottom: 0.6rem;
   }
-  .segmented button.active {
-    background: var(--bg-3);
-    color: var(--accent-text);
-    box-shadow: var(--shadow-1);
-  }
-  .cur {
-    display: inline-block;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding: 0.18rem 0.6rem;
-    border-radius: 999px;
-  }
-  .cur-allow {
-    background: var(--allow-soft);
-    color: var(--allow);
-    border: 1px solid rgba(52, 211, 153, 0.3);
-  }
-  .cur-ask {
-    background: var(--ask-soft);
-    color: var(--ask);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-  }
-  .cur-deny {
-    background: var(--deny-soft);
-    color: var(--deny);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-  }
-  .cur-none {
-    color: var(--text-3);
-    border: 1px dashed var(--border-strong);
-    font-weight: 500;
-  }
-  .buttons {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.45rem;
-    margin-top: 0.6rem;
-  }
-  .buttons button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    padding: 0.55rem;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border-strong);
-    cursor: pointer;
-    color: var(--text-1);
-    background: var(--bg-2);
-    font-size: 0.85rem;
-    font-weight: 600;
-    transition: background-color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast);
-  }
-  .buttons button:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .buttons kbd {
-    font-size: 0.62rem;
-    padding: 0 0.3rem;
-    opacity: 0.7;
-  }
-  .allow {
-    border-color: rgba(52, 211, 153, 0.35);
-    color: var(--allow);
-    background: var(--allow-soft);
-  }
-  .allow:hover:not(:disabled) {
-    background: rgba(52, 211, 153, 0.22);
-    box-shadow: 0 0 14px rgba(52, 211, 153, 0.15);
-  }
-  .ask {
-    border-color: rgba(251, 191, 36, 0.35);
-    color: var(--ask);
-    background: var(--ask-soft);
-  }
-  .ask:hover:not(:disabled) {
-    background: rgba(251, 191, 36, 0.22);
-    box-shadow: 0 0 14px rgba(251, 191, 36, 0.15);
-  }
-  .deny {
-    border-color: rgba(248, 113, 113, 0.35);
-    color: var(--deny);
-    background: var(--deny-soft);
-  }
-  .deny:hover:not(:disabled) {
-    background: rgba(248, 113, 113, 0.22);
-    box-shadow: 0 0 14px rgba(248, 113, 113, 0.15);
-  }
-  .clear:hover:not(:disabled) {
-    background: var(--bg-3);
-  }
-  .hint {
-    color: var(--text-3);
-    font-size: 0.8rem;
-    margin-top: 0.8rem;
+  .small {
+    font-size: var(--fs-xs);
+    margin: 0;
   }
   .boundary-note {
     margin-top: 0.9rem;
@@ -392,7 +378,7 @@
     border-radius: var(--r-sm);
     padding: 0.55rem 0.7rem;
     color: var(--text-3);
-    font-size: 0.72rem;
+    font-size: var(--fs-xs);
     line-height: 1.5;
   }
   .boundary-note b {
@@ -402,44 +388,20 @@
   }
   .ginote {
     margin-top: 0.9rem;
-    background: var(--ask-soft);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-    border-radius: var(--r-sm);
-    padding: 0.55rem 0.7rem;
-    font-size: 0.76rem;
+    font-size: var(--fs-sm);
     color: var(--text-2);
-    line-height: 1.55;
   }
   .ginote b {
     color: var(--ask);
   }
-  .ginote code {
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    padding: 0 0.3rem;
-    border-radius: 3px;
-    font-size: 0.72rem;
-  }
   .gbtn {
-    display: block;
+    display: flex;
     margin-top: 0.5rem;
-    background: rgba(251, 191, 36, 0.15);
-    border: 1px solid rgba(251, 191, 36, 0.35);
     color: var(--ask);
-    border-radius: var(--r-sm);
-    padding: 0.3rem 0.7rem;
-    cursor: pointer;
-    font-size: 0.74rem;
-    font-weight: 600;
-    transition: background-color var(--t-fast);
+    border-color: var(--ask-line);
+    background: var(--ask-soft);
   }
-  .gbtn:hover {
-    background: rgba(251, 191, 36, 0.25);
-  }
-  .gstat {
-    display: block;
-    margin-top: 0.4rem;
-    color: var(--accent-text);
-    font-size: 0.72rem;
+  .gbtn:hover:not(:disabled) {
+    background: var(--ask-soft-hover);
   }
 </style>

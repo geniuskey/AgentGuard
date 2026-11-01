@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import {
     addLocalToGitignore,
-    applyProfile,
     buildDiff,
     claudeProjectTrustStatus,
     exportTemplate,
@@ -27,26 +26,47 @@
     type DiffView,
     type GitignoreStatus,
     type Policy,
+    type PolicyRule,
+    type ScopeRules,
     type ScopeName,
     type SensitivePathRecord
   } from '$lib/ipc';
-  import { app, mergeRules, refreshEffective, setPolicy } from '$lib/state.svelte';
+  import {
+    app,
+    mergeRules,
+    refreshEffective,
+    setPolicy,
+    markAllScopesSaved,
+    markScopeSaved,
+    isScopeDirty,
+    upsertRule,
+    removeRule
+  } from '$lib/state.svelte';
+  import CandidateReview from '$lib/components/CandidateReview.svelte';
   import FileExplorer from '$lib/components/FileExplorer.svelte';
   import PolicyEditor from '$lib/components/PolicyEditor.svelte';
   import EffectivePreview from '$lib/components/EffectivePreview.svelte';
   import RawJsonEditor from '$lib/components/RawJsonEditor.svelte';
   import DiffViewer from '$lib/components/DiffViewer.svelte';
   import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
+  import HelpButton from '$lib/components/HelpButton.svelte';
   import { modalFocus } from '$lib/modal';
+  import { tooltip } from '$lib/tooltip';
+  import { toast } from '$lib/toast.svelte';
   import { confirmDiscardChanges, isUnsavedSource } from '$lib/unsaved';
 
   let rightMode = $state<'effective' | 'raw'>('effective');
   let workspaceMode = $state<'files' | 'policy' | 'preview'>('policy');
   let saving = $state(false);
-  let error = $state<string | null>(null);
+  let busy = $state<'scan' | 'backups' | 'report' | null>(null);
+  let moreOpen = $state(false);
+  let moreButton = $state<HTMLButtonElement | null>(null);
+  let moreMenu = $state<HTMLDivElement | null>(null);
   let diff = $state<DiffView | null>(null);
   let saveScope = $state<ScopeName>('project');
-  let profile = $state('');
+  let candidates = $state<PolicyRule[] | null>(null);
+  let candidateScope = $state<ScopeName>('project');
+  let saveSnapshot = $state<ScopeRules | null>(null);
   let gitignore = $state<GitignoreStatus | null>(null);
   let backups = $state<BackupRecord[] | null>(null);
   let sensitivePaths = $state<SensitivePathRecord[]>([]);
@@ -62,6 +82,14 @@
     claudeTrust !== null && !claudeTrust.accepted && hasSharedAllow
   );
   const activeSensitiveCount = $derived(sensitivePaths.filter((item) => !item.dismissed).length);
+  const activeDirty = $derived(isScopeDirty(app.activeScope));
+  const scanSummary = $derived(
+    app.view ? `루트 이름 기반 후보 ${app.view.scan.candidates?.length ?? 0}개 · 하위 폴더 미검사` : ''
+  );
+
+  function fail(e: unknown) {
+    toast(String(e), 'error');
+  }
 
   async function refreshClaudeTrust() {
     try {
@@ -88,11 +116,12 @@
       }
       try {
         app.scoped = await loadSettings(app.projectRoot);
+        markAllScopesSaved();
         await refreshClaudeTrust();
         await refreshEffective();
-        status = '설정 파일이 외부에서 변경되어 다시 불러왔습니다.';
+        toast('설정 파일이 외부에서 변경되어 다시 불러왔습니다.', 'info');
       } catch (e) {
-        error = String(e);
+        fail(e);
       }
     }, 400);
   }
@@ -101,12 +130,12 @@
     try {
       app.scoped = await loadSettings(app.projectRoot);
       await refreshClaudeTrust();
-      app.dirty = false;
+      markAllScopesSaved();
       await refreshEffective();
       externalChange = null;
-      status = '디스크의 설정을 다시 불러왔습니다.';
+      toast('디스크의 설정을 다시 불러왔습니다.');
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
@@ -121,7 +150,6 @@
       /* non-fatal */
     }
     sensitivePaths = app.view?.sensitivePaths ?? [];
-    profile = app.view?.project.riskProfile ?? '';
     await refreshClaudeTrust();
     try {
       await watchProject(app.projectRoot);
@@ -137,25 +165,26 @@
     unwatchProject().catch(() => {});
   });
 
-  async function onProfileChange() {
-    if (!profile) return;
+  async function applyScanRecommendations() {
+    busy = 'scan';
     try {
-      const plan = await applyProfile(app.projectRoot, profile);
-      mergeRules(app.activeScope, plan.rules);
-      if (app.view) app.view.project.riskProfile = profile;
-      await refreshEffective();
+      candidateScope = app.activeScope;
+      candidates = await scanRecommendationRules(app.projectRoot);
     } catch (e) {
-      error = String(e);
+      fail(e);
+    } finally {
+      busy = null;
     }
   }
 
-  async function applyScanRecommendations() {
+  async function acceptCandidates(rules: PolicyRule[], replacements: string[]) {
     try {
-      const rules = await scanRecommendationRules(app.projectRoot);
-      mergeRules(app.activeScope, rules);
+      mergeRules(candidateScope, rules, replacements);
+      candidates = null;
       await refreshEffective();
+      toast(`${rules.length}개 규칙을 편집에 반영했습니다. 저장하면 적용됩니다.`);
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
@@ -163,23 +192,24 @@
     try {
       await addLocalToGitignore(app.projectRoot);
       gitignore = await gitignoreStatus(app.projectRoot);
+      toast('.gitignore에 settings.local.json을 추가했습니다.');
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
   async function openSaveDialog() {
-    error = null;
     saveScope = app.activeScope;
     try {
-      diff = await buildDiff(app.projectRoot, saveScope, app.scoped[saveScope]);
+      saveSnapshot = $state.snapshot(app.scoped[saveScope]);
+      diff = await buildDiff(app.projectRoot, saveScope, saveSnapshot);
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
   async function confirmSave() {
-    if (!diff) return;
+    if (!diff || !saveSnapshot) return;
     saving = true;
     lastSaveAt = Date.now();
     try {
@@ -187,36 +217,48 @@
         projectRoot: app.projectRoot,
         projectId: app.projectId,
         scope: saveScope,
-        scopeRules: app.scoped[saveScope],
+        scopeRules: saveSnapshot,
+        expectedBefore: diff.before,
         projectName: app.projectName
       });
       if (saveScope === 'project' && app.view) app.view.hasProjectSettings = true;
       await refreshClaudeTrust();
       lastSaveAt = Date.now();
-      app.dirty = false;
+      markScopeSaved(saveScope, saveSnapshot);
       diff = null;
+      toast(`${saveScope} 설정을 저장했습니다.`);
       // Re-watch: the save may have created .claude/ dirs that weren't watchable before.
       watchProject(app.projectRoot).catch(() => {});
     } catch (e) {
-      error = String(e);
+      fail(e);
     } finally {
       saving = false;
     }
   }
 
   async function openBackups() {
+    busy = 'backups';
     try {
       backups = await listBackups(app.projectId);
     } catch (e) {
-      error = String(e);
+      fail(e);
+    } finally {
+      busy = null;
     }
   }
 
   async function showBackup(rec: BackupRecord) {
-    backupPreview = { rec, text: await previewBackup(rec.id) };
+    try {
+      backupPreview = { rec, text: await previewBackup(rec.id) };
+    } catch (e) {
+      fail(e);
+    }
   }
 
   async function doRestore(rec: BackupRecord) {
+    const message = `${rec.createdAt} 백업으로 ${rec.scope} 설정 파일을 덮어씁니다.` +
+      (app.dirty ? '\n저장하지 않은 변경도 모두 사라집니다.' : '') + '\n계속할까요?';
+    if (!window.confirm(message)) return;
     try {
       lastSaveAt = Date.now();
       await restoreBackup(rec.id);
@@ -224,53 +266,71 @@
       backups = null;
       // Reload rules to reflect restored file.
       app.scoped = await loadSettings(app.projectRoot);
+      markAllScopesSaved();
       await refreshClaudeTrust();
       await refreshEffective();
+      toast('백업을 복원했습니다.');
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
   async function makeReport() {
+    busy = 'report';
     try {
       report = await policyReport({
+        projectRoot: app.projectRoot,
         projectName: app.projectName,
-        profile: profile || app.view?.project.riskProfile || null,
+        profile: null,
         scoped: app.scoped,
         riskScore: app.view?.risk.score ?? 0,
         riskLevel: app.view?.risk.level ?? 'Low'
       });
     } catch (e) {
-      error = String(e);
+      fail(e);
+    } finally {
+      busy = null;
     }
   }
 
   async function copyReport() {
-    if (report) await navigator.clipboard.writeText(report);
+    if (!report) return;
+    try {
+      await navigator.clipboard.writeText(report);
+      toast('리포트를 클립보드에 복사했습니다.');
+    } catch (e) {
+      fail(e);
+    }
   }
-
-  let status = $state<string | null>(null);
 
   async function doExport() {
     try {
       const p = await exportTemplate(app.scoped, app.projectName);
-      if (p) status = `템플릿 저장됨 → ${p}`;
+      if (p) toast(`템플릿을 저장했습니다 → ${p}`);
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
   async function doImport() {
+    if (
+      !window.confirm(
+        '템플릿을 불러오면 모든 scope의 현재 편집 내용을 덮어씁니다.' +
+          (app.dirty ? '\n저장하지 않은 변경도 사라집니다.' : '') +
+          '\n계속할까요?'
+      )
+    ) {
+      return;
+    }
     try {
       const s = await importTemplate();
       if (s) {
         app.scoped = s;
-        app.dirty = true;
         await refreshEffective();
-        status = '템플릿을 불러왔습니다. 저장하면 적용됩니다.';
+        toast('템플릿을 불러왔습니다. 저장하면 적용됩니다.');
       }
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
@@ -278,17 +338,78 @@
     if (!report) return;
     try {
       const p = await saveReportFile(report, app.projectName);
-      if (p) status = `리포트 저장됨 → ${p}`;
+      if (p) toast(`리포트를 저장했습니다 → ${p}`);
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
+  async function toggleMore() {
+    moreOpen = !moreOpen;
+    if (moreOpen) {
+      await tick();
+      moreMenu?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }
+  }
+
+  function closeMore(restoreFocus = false) {
+    if (!moreOpen) return;
+    moreOpen = false;
+    if (restoreFocus) moreButton?.focus();
+  }
+
+  function runMore(action: () => void) {
+    closeMore(true);
+    action();
+  }
+
+  function onMoreKey(e: KeyboardEvent) {
+    if (!moreMenu) return;
+    const items = Array.from(moreMenu.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'));
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMore(true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+      items[next]?.focus();
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      items[e.key === 'Home' ? 0 : items.length - 1]?.focus();
+    } else if (e.key === 'Tab') {
+      closeMore();
+    }
+  }
+
+  function onWindowClick(e: MouseEvent) {
+    const t = e.target as Node | null;
+    if (moreOpen && t && !moreMenu?.contains(t) && !moreButton?.contains(t)) closeMore();
+  }
+
   // Keyboard shortcuts: Ctrl/Cmd+S save; a/d/k set policy on the selected path.
+  const POLICY_LABEL: Record<Policy, string> = { allow: 'Allow', ask: 'Ask', deny: 'Deny' };
+
   async function applyQuick(policy: Policy) {
     if (!app.selectedPath) return;
-    setPolicy(app.selectedPath, policy, 'folder-and-children');
+    const path = app.selectedPath;
+    const entry = app.view?.tree.find((item) => item.path === path);
+    // A nested selection has no reliable kind here; leave it to the policy editor.
+    if (!entry) return;
+    const scope = app.activeScope;
+    const previous = app.scoped[scope].rules.find((r) => r.path === path);
+    const before = previous ? $state.snapshot(previous) : null;
+    setPolicy(path, policy, entry.isDir ? 'folder-and-children' : 'file');
     await refreshEffective();
+    toast(`${entry.name || path} → ${POLICY_LABEL[policy]} (${scope})`, 'info', {
+      label: '되돌리기',
+      run: () => {
+        if (before) upsertRule(scope, before);
+        else removeRule(scope, path);
+        refreshEffective().catch(fail);
+      }
+    });
   }
 
   async function openSensitivePaths() {
@@ -296,7 +417,7 @@
       sensitivePaths = await listSensitivePaths(app.projectId);
       showSensitivePaths = true;
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
@@ -306,7 +427,7 @@
       item.dismissed = !item.dismissed;
       if (app.view) app.view.sensitivePaths = sensitivePaths;
     } catch (e) {
-      error = String(e);
+      fail(e);
     }
   }
 
@@ -322,13 +443,19 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    const t = e.target as HTMLElement | null;
-    if (t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      if (app.dirty) openSaveDialog();
+    if (e.key === 'Escape' && moreOpen) {
+      closeMore(true);
       return;
     }
+    if (candidates || diff || backups || showSensitivePaths || report) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (activeDirty) openSaveDialog();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey || moreOpen) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable)) return;
     if (!app.selectedPath) return;
     if (e.key === 'a') applyQuick('allow');
     else if (e.key === 'd') applyQuick('deny');
@@ -336,116 +463,157 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onclick={onWindowClick} />
 <UnsavedMarker id="project-rules" when={app.dirty} />
 
 <div class="page">
   <div class="top">
-    <button class="back" onclick={() => goto('/')} aria-label="홈으로">←</button>
+    <button class="btn btn-ghost btn-icon back" onclick={() => goto('/')} aria-label="홈으로">←</button>
     <div class="title">
-      {app.projectName}
-      {#if app.view?.risk}
-        <span class="risk risk-{app.view.risk.level.toLowerCase()}">
-          Risk {app.view.risk.level} · {app.view.risk.score}
-        </span>
-      {/if}
+      <span class="pname truncate">{app.projectName}</span>
+      {#if app.view}<span class="scan-summary truncate" use:tooltip={scanSummary}>{scanSummary}</span>{/if}
     </div>
 
     <div class="tools">
-      <select class="profile" bind:value={profile} onchange={onProfileChange} title="프로필 적용">
-        <option value="">Profile…</option>
-        <option value="conservative">Conservative</option>
-        <option value="balanced">Balanced</option>
-        <option value="fast-dev">Fast Dev</option>
-        <option value="custom">Custom</option>
-      </select>
-      <button class="mini" onclick={applyScanRecommendations}>추천 적용</button>
-      <button class="mini" onclick={openSensitivePaths}>민감 경로 {activeSensitiveCount}</button>
-      <span class="sep" aria-hidden="true"></span>
-      <button class="mini" onclick={() => goto('/env')}>Env</button>
-      <button class="mini" onclick={openBackups}>Backups</button>
-      <button class="mini" onclick={makeReport}>Report</button>
-      <button class="mini" onclick={doExport}>Export</button>
-      <button class="mini" onclick={doImport}>Import</button>
-      <button class="mini" onclick={() => goto('/guide?s=project')} title="사용 가이드" aria-label="사용 가이드">?</button>
+      <button class="btn btn-ghost btn-sm" onclick={applyScanRecommendations} disabled={busy === 'scan'}>
+        {busy === 'scan' ? '후보 검사 중…' : '경로 후보 검토'}
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick={openSensitivePaths}>
+        검토 대상 <span class="chip" class:chip-ask={activeSensitiveCount > 0}>{activeSensitiveCount}</span>
+      </button>
+      <div class="more">
+        <button
+          class="btn btn-ghost btn-sm"
+          bind:this={moreButton}
+          aria-haspopup="menu"
+          aria-expanded={moreOpen}
+          aria-controls="project-more-menu"
+          onclick={toggleMore}
+        >
+          {busy === 'report' ? '리포트 생성 중…' : busy === 'backups' ? '백업 불러오는 중…' : '더보기'}
+          <span aria-hidden="true">▾</span>
+        </button>
+        {#if moreOpen}
+          <div
+            class="menu"
+            id="project-more-menu"
+            role="menu"
+            tabindex="-1"
+            aria-label="더보기"
+            bind:this={moreMenu}
+            onkeydown={onMoreKey}
+          >
+            <button role="menuitem" onclick={() => runMore(() => goto('/env'))}>환경 변수</button>
+            <button role="menuitem" disabled={busy === 'backups'} onclick={() => runMore(openBackups)}>
+              {busy === 'backups' ? '백업 불러오는 중…' : '백업 복원…'}
+            </button>
+            <button role="menuitem" disabled={busy === 'report'} onclick={() => runMore(makeReport)}>
+              {busy === 'report' ? '리포트 생성 중…' : '정책 리포트…'}
+            </button>
+            <div class="menu-sep" role="separator"></div>
+            <button role="menuitem" onclick={() => runMore(doExport)}>템플릿 내보내기…</button>
+            <button role="menuitem" onclick={() => runMore(doImport)}>템플릿 가져오기…</button>
+          </div>
+        {/if}
+      </div>
+      <HelpButton section="project" compact />
     </div>
 
-    <button class="save save-push" class:dirty={app.dirty} onclick={openSaveDialog} disabled={!app.dirty}>
-      {#if app.dirty}<span class="save-dot" aria-hidden="true"></span>Save…{:else}Saved{/if}
+    <button
+      class="btn save"
+      class:btn-primary={activeDirty}
+      onclick={openSaveDialog}
+      disabled={!activeDirty}
+      title="Ctrl+S"
+    >
+      {#if activeDirty}<span class="save-dot" aria-hidden="true"></span>{app.activeScope} 저장…{:else}{app.activeScope} 저장됨{/if}
     </button>
   </div>
 
-  {#if gitignore && gitignore.exists && !gitignore.ignored}
-    <div class="banner">
-      <span class="banner-icon" aria-hidden="true">⚠</span>
-      <span>
-        <code>.claude/settings.local.json</code> 이 <code>.gitignore</code>에 없습니다 (개인 설정 유출
-        위험).
-      </span>
-      <button onclick={fixGitignore}>.gitignore에 추가</button>
+  {#if app.dirty}<p class="dirty-line">저장하지 않은 scope: {(['project', 'local', 'user'] as const).filter(isScopeDirty).join(', ')}</p>{/if}
+
+  {#if (gitignore && gitignore.exists && !gitignore.ignored) || showTrustWarning || externalChange}
+    <div class="notices">
+      {#if gitignore && gitignore.exists && !gitignore.ignored}
+        <div class="callout callout-warn notice">
+          <span>
+            <code>.claude/settings.local.json</code> 이 <code>.gitignore</code>에 없습니다 (개인 설정 유출
+            위험).
+          </span>
+          <span class="notice-actions"><button class="btn btn-sm" onclick={fixGitignore}>.gitignore에 추가</button></span>
+        </div>
+      {/if}
+
+      {#if showTrustWarning}
+        <div class="callout callout-warn notice" role="alert">
+          <span>
+            이 프로젝트는 아직 Claude Code에서 신뢰되지 않았습니다. 공유
+            <code>.claude/settings.json</code>의 Allow 규칙은 무시되고 Deny만 적용됩니다.
+            프로젝트 폴더에서 대화형 <code>claude</code>를 실행해 trust 확인을 승인하세요.
+          </span>
+        </div>
+      {/if}
+
+      {#if externalChange}
+        <div class="callout callout-warn notice" role="alert">
+          <span>
+            설정 파일이 <b>외부에서 변경</b>되었습니다: <code>{externalChange}</code> — 저장하지 않은
+            편집과 충돌할 수 있습니다.
+          </span>
+          <span class="notice-actions">
+            <button class="btn btn-sm" onclick={reloadFromDisk}>다시 불러오기 (내 변경 폐기)</button>
+            <button class="btn btn-ghost btn-sm" onclick={() => (externalChange = null)}>무시</button>
+          </span>
+        </div>
+      {/if}
     </div>
   {/if}
 
-  {#if showTrustWarning}
-    <div class="banner trust-banner" role="alert">
-      <span class="banner-icon" aria-hidden="true">⚠</span>
-      <span>
-        이 프로젝트는 아직 Claude Code에서 신뢰되지 않았습니다. 공유
-        <code>.claude/settings.json</code>의 Allow 규칙은 무시되고 Deny만 적용됩니다.
-        프로젝트 폴더에서 대화형 <code>claude</code>를 실행해 trust 확인을 승인하세요.
-      </span>
+  <div class="workspace-tabs">
+    <div class="segmented" role="tablist" aria-label="편집 영역">
+      <button
+        role="tab"
+        id="tab-files"
+        aria-controls="panel-files"
+        aria-selected={workspaceMode === 'files'}
+        onclick={() => (workspaceMode = 'files')}>파일</button
+      >
+      <button
+        role="tab"
+        id="tab-policy"
+        aria-controls="panel-policy"
+        aria-selected={workspaceMode === 'policy'}
+        onclick={() => (workspaceMode = 'policy')}>정책</button
+      >
+      <button
+        role="tab"
+        id="tab-preview"
+        aria-controls="panel-preview"
+        aria-selected={workspaceMode === 'preview'}
+        onclick={() => (workspaceMode = 'preview')}>미리보기</button
+      >
     </div>
-  {/if}
-
-  {#if externalChange}
-    <div class="banner">
-      <span class="banner-icon" aria-hidden="true">⚠</span>
-      <span>
-        설정 파일이 <b>외부에서 변경</b>되었습니다: <code>{externalChange}</code> — 저장하지 않은
-        편집과 충돌할 수 있습니다.
-      </span>
-      <span class="banner-actions">
-        <button onclick={reloadFromDisk}>다시 불러오기 (내 변경 폐기)</button>
-        <button onclick={() => (externalChange = null)}>무시</button>
-      </span>
-    </div>
-  {/if}
-
-  {#if error}<div class="err" role="alert">{error}</div>{/if}
-  {#if status}<div class="status" role="status">{status}</div>{/if}
-
-  <nav class="workspace-tabs" aria-label="편집 영역">
-    <button
-      class:active={workspaceMode === 'files'}
-      aria-pressed={workspaceMode === 'files'}
-      onclick={() => (workspaceMode = 'files')}>Files</button
-    >
-    <button
-      class:active={workspaceMode === 'policy'}
-      aria-pressed={workspaceMode === 'policy'}
-      onclick={() => (workspaceMode = 'policy')}>Policy</button
-    >
-    <button
-      class:active={workspaceMode === 'preview'}
-      aria-pressed={workspaceMode === 'preview'}
-      onclick={() => (workspaceMode = 'preview')}>Preview</button
-    >
-  </nav>
+  </div>
 
   <div class="cols">
-    <section class="left" class:active={workspaceMode === 'files'} aria-label="파일 탐색기"><FileExplorer /></section>
-    <section class="mid" class:active={workspaceMode === 'policy'} aria-label="정책 편집기"><PolicyEditor /></section>
-    <section class="right" class:active={workspaceMode === 'preview'} aria-label="적용 결과 미리보기">
+    <section id="panel-files" class="left" class:active={workspaceMode === 'files'} aria-label="파일 탐색기"><FileExplorer /></section>
+    <section id="panel-policy" class="mid" class:active={workspaceMode === 'policy'} aria-label="정책 편집기"><PolicyEditor /></section>
+    <section id="panel-preview" class="right" class:active={workspaceMode === 'preview'} aria-label="적용 결과 미리보기">
       <div class="rmode">
-        <button class:active={rightMode === 'effective'} onclick={() => setRightMode('effective')}>
-          Effective
-        </button>
-        <button class:active={rightMode === 'raw'} onclick={() => setRightMode('raw')}>Raw JSON</button>
+        <div class="segmented">
+          <button aria-pressed={rightMode === 'effective'} onclick={() => setRightMode('effective')}>적용 결과</button>
+          <button aria-pressed={rightMode === 'raw'} onclick={() => setRightMode('raw')}>Raw JSON</button>
+        </div>
       </div>
       {#if rightMode === 'effective'}<EffectivePreview />{:else}<RawJsonEditor />{/if}
     </section>
   </div>
 </div>
+
+{#if candidates}
+  <CandidateReview {candidates} existing={app.scoped[candidateScope].rules} scope={candidateScope}
+    onapply={acceptCandidates} onclose={() => (candidates = null)} />
+{/if}
 
 {#if diff}
   <div class="modal-bg" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) diff = null; }}>
@@ -494,11 +662,11 @@
       {:else}
         <ul class="blist">
           {#each backups as b (b.id)}
-            <li>
+            <li class:viewing={backupPreview?.rec.id === b.id}>
               <span class="binfo">{b.createdAt} · {b.scope}</span>
               <span class="bactions">
-                <button onclick={() => showBackup(b)}>미리보기</button>
-                <button class="bprimary" onclick={() => doRestore(b)}>복원</button>
+                <button class="btn btn-sm" onclick={() => showBackup(b)}>미리보기</button>
+                <button class="btn btn-sm btn-primary" onclick={() => doRestore(b)}>복원…</button>
               </span>
             </li>
           {/each}
@@ -524,8 +692,8 @@
       tabindex="-1"
       use:modalFocus={() => (showSensitivePaths = false)}
     >
-      <h3 id="sensitive-paths-title">스캐너 민감 경로</h3>
-      <p class="nochg">무시한 경로는 다음 스캔과 프로필 추천에서 제외됩니다.</p>
+      <h3 id="sensitive-paths-title">이름 기반 검토 후보</h3>
+      <p class="nochg">무시한 경로는 다음 후보 검토에서 제외됩니다. 비밀값 유무를 검사한 결과는 아닙니다.</p>
       {#if sensitivePaths.length === 0}
         <p class="nochg">발견된 민감 경로가 없습니다.</p>
       {:else}
@@ -533,7 +701,7 @@
           {#each sensitivePaths as item (item.id)}
             <li>
               <span class="binfo"><code>{item.path}</code> · {item.source}</span>
-              <button onclick={() => toggleSensitivePath(item)}>
+              <button class="btn btn-sm" onclick={() => toggleSensitivePath(item)}>
                 {item.dismissed ? '다시 추천' : '무시'}
               </button>
             </li>
@@ -557,7 +725,7 @@
       tabindex="-1"
       use:modalFocus={() => (report = null)}
     >
-      <h3 id="project-report-title">Policy Report (Markdown)</h3>
+      <h3 id="project-report-title">정책 리포트 (Markdown)</h3>
       <pre class="preview">{report}</pre>
       <div class="modal-actions">
         <button data-modal-initial onclick={() => (report = null)}>닫기</button>
@@ -570,9 +738,10 @@
 
 <style>
   .page {
-    height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
   .top {
     display: flex;
@@ -581,186 +750,124 @@
     padding: 0.5rem 0.8rem;
     border-bottom: 1px solid var(--border);
     background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
-    flex-wrap: wrap;
     flex-shrink: 0;
-  }
-  .back {
-    background: none;
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.28rem 0.6rem;
-    cursor: pointer;
-    font-size: 0.9rem;
-    line-height: 1.2;
-    transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
-  }
-  .back:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
-  .title {
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
     min-width: 0;
   }
-  .risk {
-    font-size: 0.68rem;
-    font-weight: 700;
-    padding: 0.12rem 0.55rem;
-    border-radius: 999px;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
+  .back {
+    flex-shrink: 0;
+    font-size: var(--fs-lg);
   }
-  .risk-high {
-    background: var(--deny-soft);
-    color: var(--deny);
-    border: 1px solid rgba(248, 113, 113, 0.35);
+  .title {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
   }
-  .risk-medium {
-    background: var(--ask-soft);
-    color: var(--ask);
-    border: 1px solid rgba(251, 191, 36, 0.35);
+  .pname {
+    flex-shrink: 1;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    max-width: 100%;
   }
-  .risk-low {
-    background: var(--allow-soft);
-    color: var(--allow);
-    border: 1px solid rgba(52, 211, 153, 0.35);
+  .scan-summary {
+    flex: 1 1 0;
+    font-size: var(--fs-sm);
+    color: var(--text-3);
   }
   .tools {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
-    flex-wrap: wrap;
+    gap: 0.25rem;
+    flex-shrink: 0;
   }
-  .sep {
-    width: 1px;
-    height: 1.1rem;
-    background: var(--border);
-    margin: 0 0.2rem;
+  .tools .chip {
+    padding: 0 0.4rem;
   }
-  .profile {
-    background: var(--bg-1);
-    color: var(--text-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
-    padding: 0.3rem 0.4rem;
-    font-size: 0.78rem;
+  .more {
+    position: relative;
   }
-  .mini {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.3rem 0.6rem;
-    cursor: pointer;
-    font-size: 0.78rem;
-    transition: color var(--t-fast), background-color var(--t-fast), border-color var(--t-fast);
-  }
-  .mini:hover {
-    color: var(--text-1);
+  .menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 40;
+    min-width: 11rem;
+    display: flex;
+    flex-direction: column;
+    padding: 0.3rem;
     background: var(--bg-2);
-    border-color: var(--border);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-2);
+    animation: ag-rise-in 120ms cubic-bezier(0.2, 0, 0, 1);
   }
-  .save-push {
-    margin-left: auto;
+  .menu button {
+    background: none;
+    border: 0;
+    border-radius: var(--r-sm);
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    color: var(--text-1);
+    font-size: var(--fs-md);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .menu button:hover:not(:disabled),
+  .menu button:focus-visible {
+    background: var(--bg-3);
+    outline: none;
+  }
+  .menu button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .menu-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 0.25rem 0.2rem;
   }
   .save {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    color: var(--text-3);
-    border-radius: var(--r-sm);
-    padding: 0.4rem 1rem;
+    flex-shrink: 0;
     font-weight: 600;
-    font-size: 0.84rem;
-    cursor: default;
-    transition: background-color var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
-  }
-  .save.dirty {
-    background: linear-gradient(180deg, #3b82f6, #2563eb);
-    border-color: rgba(147, 197, 253, 0.25);
-    color: white;
-    cursor: pointer;
-    box-shadow: 0 2px 14px rgba(37, 99, 235, 0.35);
-  }
-  .save.dirty:hover {
-    filter: brightness(1.08);
   }
   .save-dot {
     width: 7px;
     height: 7px;
     border-radius: 999px;
-    background: #fff;
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+    background: var(--on-accent);
   }
-  .banner {
-    background: var(--ask-soft);
-    border-bottom: 1px solid rgba(251, 191, 36, 0.25);
-    color: var(--ask);
-    padding: 0.45rem 0.8rem;
-    font-size: 0.8rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .dirty-line {
+    margin: 0;
+    padding: 0.25rem 0.8rem;
+    font-size: var(--fs-xs);
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-  .banner-icon {
-    color: var(--ask);
+  .notices {
+    display: grid;
+    gap: 0.4rem;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
-  .banner code {
-    background: rgba(0, 0, 0, 0.25);
-    padding: 0 0.3rem;
-    border-radius: 3px;
+  .notice {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: var(--fs-md);
   }
-  .banner button {
-    margin-left: auto;
-    background: rgba(251, 191, 36, 0.15);
-    border: 1px solid rgba(251, 191, 36, 0.35);
-    color: var(--ask);
-    border-radius: var(--r-sm);
-    padding: 0.25rem 0.65rem;
-    cursor: pointer;
-    font-size: 0.76rem;
-    transition: background-color var(--t-fast);
-  }
-  .banner button:hover {
-    background: rgba(251, 191, 36, 0.25);
-  }
-  .banner-actions {
+  .notice-actions {
     margin-left: auto;
     display: flex;
     gap: 0.35rem;
     flex-shrink: 0;
   }
-  .banner-actions button {
-    margin-left: 0;
-    white-space: nowrap;
-  }
-  .err {
-    background: var(--deny-soft);
-    border-bottom: 1px solid rgba(248, 113, 113, 0.25);
-    color: var(--deny);
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    flex-shrink: 0;
-  }
-  .status {
-    background: var(--allow-soft);
-    border-bottom: 1px solid rgba(52, 211, 153, 0.2);
-    color: var(--allow);
-    padding: 0.35rem 0.8rem;
-    font-size: 0.78rem;
-    flex-shrink: 0;
-  }
   .cols {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.2fr) minmax(280px, 1fr);
     flex: 1;
     min-height: 0;
   }
@@ -780,28 +887,16 @@
   }
   .rmode {
     display: flex;
-    gap: 0.25rem;
-    padding: 0.4rem 0.5rem;
+    align-items: center;
+    min-height: 2.6rem;
+    box-sizing: border-box;
+    padding: 0.4rem 0.7rem;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
-  .rmode button {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.22rem 0.65rem;
-    cursor: pointer;
-    font-size: 0.75rem;
-    transition: color var(--t-fast), background-color var(--t-fast), border-color var(--t-fast);
-  }
-  .rmode button:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
-  .rmode button.active {
-    border-color: rgba(79, 142, 247, 0.35);
-    background: var(--accent-soft);
-    color: var(--accent-text);
+  .rmode .segmented > button {
+    font-size: var(--fs-sm);
+    padding: 0.2rem 0.65rem;
   }
   .right {
     display: flex;
@@ -809,13 +904,14 @@
   }
   .fp {
     color: var(--text-3);
-    font-size: 0.75rem;
+    font-size: var(--fs-sm);
     font-family: var(--font-mono);
     margin: 0 0 0.6rem;
     word-break: break-all;
   }
   .nochg {
     color: var(--text-2);
+    font-size: var(--fs-md);
   }
   .blist {
     list-style: none;
@@ -827,89 +923,58 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 0.8rem;
+    gap: 0.5rem;
+    font-size: var(--fs-md);
     border: 1px solid var(--border);
     background: var(--bg-2);
     border-radius: var(--r-sm);
     padding: 0.35rem 0.6rem;
   }
+  .blist li.viewing {
+    border-color: var(--accent-line);
+  }
   .binfo {
+    min-width: 0;
     font-variant-numeric: tabular-nums;
     color: var(--text-2);
+    overflow-wrap: anywhere;
   }
   .bactions {
     display: flex;
     gap: 0.35rem;
-  }
-  .bactions button {
-    background: var(--bg-3);
-    border: 1px solid var(--border-strong);
-    color: var(--text-1);
-    border-radius: 5px;
-    padding: 0.2rem 0.55rem;
-    cursor: pointer;
-    font-size: 0.72rem;
-    transition: background-color var(--t-fast), border-color var(--t-fast);
-  }
-  .bactions button:hover {
-    border-color: var(--accent);
-  }
-  .bactions .bprimary {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-    color: white;
+    flex-shrink: 0;
   }
   .preview {
     background: var(--bg-0);
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     padding: 0.6rem;
-    font-size: 0.72rem;
+    font-size: var(--fs-sm);
     max-height: 40vh;
     overflow: auto;
     white-space: pre-wrap;
     margin-top: 0.6rem;
   }
 
-  @media (max-width: 1100px) {
-    .page {
-      height: 100dvh;
-      overflow: hidden;
+  @media (max-width: 1000px) {
+    .scan-summary {
+      display: none;
     }
-    .top .tools {
-      order: 3;
-      flex: 1 0 100%;
-      flex-wrap: nowrap;
-      max-width: 100%;
-      overflow-x: auto;
-      padding-bottom: 0.15rem;
-    }
-    .top .tools > * {
-      flex-shrink: 0;
-    }
+  }
+
+  @media (max-width: 900px) {
     .workspace-tabs {
       display: flex;
       flex-shrink: 0;
-      gap: 0.25rem;
       padding: 0.35rem 0.5rem;
       border-bottom: 1px solid var(--border);
       background: var(--bg-1);
-      overflow-x: auto;
     }
-    .workspace-tabs button {
+    .workspace-tabs .segmented {
+      flex: 1;
+    }
+    .workspace-tabs .segmented > button {
       flex: 1 0 auto;
-      min-width: 5.5rem;
-      border: 1px solid transparent;
-      border-radius: var(--r-sm);
-      background: transparent;
-      color: var(--text-2);
-      padding: 0.32rem 0.7rem;
-      cursor: pointer;
-    }
-    .workspace-tabs button.active {
-      border-color: rgba(79, 142, 247, 0.35);
-      background: var(--accent-soft);
-      color: var(--accent-text);
     }
     .cols {
       display: block;
@@ -927,39 +992,25 @@
     .cols .right.active {
       display: flex;
     }
-    .rmode {
-      flex-shrink: 0;
-      overflow-x: auto;
-    }
-    .rmode button {
-      flex-shrink: 0;
-      white-space: nowrap;
-    }
   }
 
   @media (max-width: 700px) {
     .top {
       gap: 0.4rem;
       padding: 0.45rem 0.55rem;
+      flex-wrap: wrap;
     }
-    .title {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .tools {
+      order: 3;
+      flex: 1 0 100%;
     }
-    .risk {
-      display: none;
-    }
-    .save {
-      padding-inline: 0.7rem;
-    }
-    .banner {
+    .notice {
       align-items: flex-start;
       flex-wrap: wrap;
     }
-    .banner-actions {
+    .notice-actions {
       flex-basis: 100%;
+      margin-left: 0;
     }
   }
 </style>

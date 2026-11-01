@@ -1,14 +1,9 @@
-//! Policy simulator: answers "would Claude Code allow this?" for a concrete
-//! path or shell command, with the matching rules as evidence.
-//!
-//! Path queries reuse the effective merge (`effective.rs`) over the neutral
-//! rules. Command queries evaluate raw `Bash(...)` or `PowerShell(...)`
-//! specifiers with Claude Code's wildcard semantics. When nothing matches the
-//! decision falls back to Claude Code's normal prompt behavior (`ask`);
-//! deny > ask > allow otherwise.
+//! Compare explicit rules for supported paths and simple shell commands.
+//! Unsupported syntax and unmatched inputs have no decision. These comparisons
+//! never predict runtime approval (modes, trust, CLI flags, hooks, sandbox).
 
-use crate::effective::{self, ScopedRules};
-use crate::model::{AppliesTo, Policy, Scope};
+use crate::effective::{self, MatchContext, ScopedRules};
+use crate::model::{AppliesTo, Policy, Scope, Tool};
 use crate::policy::{self, Permissions};
 use serde::Serialize;
 
@@ -52,9 +47,10 @@ pub struct SimResult {
     pub query: String,
     /// `"path"` or `"command"`.
     pub kind: String,
-    pub decision: Policy,
+    pub decision: Option<Policy>,
+    pub notes: Vec<String>,
     pub matches: Vec<SimMatch>,
-    /// No rule matched — Claude Code's default prompt behavior decided.
+    /// No explicit rule matched; runtime approval has not been determined.
     pub fallback: bool,
 }
 
@@ -66,8 +62,17 @@ fn mark_decisive(matches: &mut [SimMatch], decision: Policy) {
 
 /// Simulate file access for a project-relative path against the neutral rules.
 pub fn simulate_path(rules: &ScopedRules, target: &str) -> SimResult {
-    let eff = effective::compute_for(rules, target);
-    let mut matches: Vec<SimMatch> = effective::matching_rules(rules, target)
+    simulate_path_for(rules, target, Tool::Read, &MatchContext::default())
+}
+
+pub fn simulate_path_for(
+    rules: &ScopedRules,
+    target: &str,
+    tool: Tool,
+    context: &MatchContext,
+) -> SimResult {
+    let eff = effective::compute_for_tool(rules, target, tool, context);
+    let mut matches: Vec<SimMatch> = effective::matching_rules_for(rules, target, tool, context)
         .into_iter()
         .map(|(scope, r)| SimMatch {
             scope,
@@ -77,11 +82,18 @@ pub fn simulate_path(rules: &ScopedRules, target: &str) -> SimResult {
         })
         .collect();
     let fallback = matches.is_empty();
-    mark_decisive(&mut matches, eff.effective);
+    if let Some(decision) = eff.effective {
+        mark_decisive(&mut matches, decision);
+    }
     SimResult {
         query: eff.path,
         kind: "path".into(),
         decision: eff.effective,
+        notes: vec![if eff.incomplete {
+            "컨텍스트가 없거나 지원하지 않는 경로 패턴이 있어 판정할 수 없습니다."
+        } else {
+            "명시된 경로 규칙만 비교했습니다. 실행 모드·신뢰·CLI 설정·심볼릭 링크·훅에 따른 실제 승인 결과는 다를 수 있습니다."
+        }.into()],
         matches,
         fallback,
     }
@@ -184,6 +196,57 @@ pub fn simulate_command(
     tool: ShellTool,
 ) -> SimResult {
     let cmd = command.trim();
+    // A wildcard is not a shell parser. Never approve compound commands,
+    // substitutions, quoted invocations, redirections or wrapper/alias forms.
+    let first = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let unsupported = cmd.contains([
+        ';', '|', '&', '\n', '\r', '`', '$', '<', '>', '(', ')', '\'', '"',
+    ]) || matches!(
+        first.as_str(),
+        "timeout"
+            | "time"
+            | "nice"
+            | "nohup"
+            | "stdbuf"
+            | "command"
+            | "builtin"
+            | "noglob"
+            | "xargs"
+            | "watch"
+            | "setsid"
+            | "ionice"
+            | "flock"
+            | "find"
+    ) || (tool == ShellTool::PowerShell
+        && matches!(
+            first.as_str(),
+            "gci"
+                | "ls"
+                | "dir"
+                | "cat"
+                | "gc"
+                | "type"
+                | "rm"
+                | "del"
+                | "erase"
+                | "ri"
+                | "curl"
+                | "wget"
+                | "iwr"
+                | "irm"
+                | "saps"
+                | "start"
+        ))
+        || first.contains('=');
+    if unsupported {
+        return SimResult { query: cmd.into(), kind: "command".into(), decision: None,
+            matches: Vec::new(), fallback: false,
+            notes: vec!["복합 명령·인용·치환·리다이렉션·래퍼·별칭은 이 비교기에서 판정하지 않습니다. 실제 Claude Code에서 확인하세요.".into()] };
+    }
     let mut matches = Vec::new();
     for (scope, p) in perms {
         for (list, arr) in [
@@ -206,20 +269,23 @@ pub fn simulate_command(
 
     let has = |p: Policy| matches.iter().any(|m| m.list == p);
     let (decision, fallback) = if has(Policy::Deny) {
-        (Policy::Deny, false)
+        (Some(Policy::Deny), false)
     } else if has(Policy::Ask) {
-        (Policy::Ask, false)
+        (Some(Policy::Ask), false)
     } else if has(Policy::Allow) {
-        (Policy::Allow, false)
+        (Some(Policy::Allow), false)
     } else {
-        (effective::fallback(), true)
+        (None, true)
     };
-    mark_decisive(&mut matches, decision);
+    if let Some(decision) = decision {
+        mark_decisive(&mut matches, decision);
+    }
 
     SimResult {
         query: cmd.to_string(),
         kind: "command".into(),
         decision,
+        notes: vec!["저장된 명시 규칙의 단순 문자열 비교입니다. 실행 모드·신뢰·샌드박스·훅·CLI 설정에 따른 실제 승인은 예측하지 않습니다.".into()],
         matches,
         fallback,
     }
@@ -246,17 +312,17 @@ mod tests {
         )];
 
         let r = simulate_command(&scopes, "npm run test -- --watch", ShellTool::Bash);
-        assert_eq!(r.decision, Policy::Allow);
+        assert_eq!(r.decision, Some(Policy::Allow));
         assert_eq!(r.matches.len(), 1);
         assert!(r.matches[0].decisive);
 
         let r = simulate_command(&scopes, "git status", ShellTool::Bash);
-        assert_eq!(r.decision, Policy::Allow);
+        assert_eq!(r.decision, Some(Policy::Allow));
 
         // Exact rule does not cover arguments.
         let r = simulate_command(&scopes, "git status --short", ShellTool::Bash);
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Ask); // unmatched -> prompt
+        assert_eq!(r.decision, None); // no explicit rule
     }
 
     #[test]
@@ -266,7 +332,7 @@ mod tests {
             (Scope::Local, perms(&["Bash(curl:*)"], &[], &[])),
         ];
         let r = simulate_command(&scopes, "curl https://example.com", ShellTool::Bash);
-        assert_eq!(r.decision, Policy::Deny);
+        assert_eq!(r.decision, Some(Policy::Deny));
         assert_eq!(r.matches.len(), 2);
         let deny = r.matches.iter().find(|m| m.list == Policy::Deny).unwrap();
         assert!(deny.decisive);
@@ -278,20 +344,20 @@ mod tests {
     fn bare_bash_rule_matches_everything() {
         let scopes = vec![(Scope::Project, perms(&[], &["Bash"], &[]))];
         let r = simulate_command(&scopes, "anything at all", ShellTool::Bash);
-        assert_eq!(r.decision, Policy::Ask);
+        assert_eq!(r.decision, Some(Policy::Ask));
         assert!(!r.fallback);
     }
 
     #[test]
-    fn command_fallback_is_ask() {
+    fn unmatched_commands_have_no_explicit_decision() {
         let scopes = vec![(Scope::Project, perms(&[], &[], &[]))];
         let r = simulate_command(&scopes, "rm -rf /", ShellTool::Bash);
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Ask);
+        assert_eq!(r.decision, None);
 
         let r = simulate_command(&scopes, "ls", ShellTool::Bash);
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Ask);
+        assert_eq!(r.decision, None);
     }
 
     #[test]
@@ -328,12 +394,12 @@ mod tests {
         )];
 
         let ps = simulate_command(&scopes, "NPM RUN CHECK", ShellTool::PowerShell);
-        assert_eq!(ps.decision, Policy::Allow);
+        assert_eq!(ps.decision, Some(Policy::Allow));
         assert_eq!(ps.matches[0].rule, "PowerShell(npm run *)");
 
         let bash = simulate_command(&scopes, "npm run check", ShellTool::Bash);
         assert!(bash.fallback);
-        assert_eq!(bash.decision, Policy::Ask);
+        assert_eq!(bash.decision, None);
     }
 
     #[test]
@@ -353,7 +419,7 @@ mod tests {
         };
 
         let r = simulate_path(&rules, "src/secret/key.pem");
-        assert_eq!(r.decision, Policy::Deny);
+        assert_eq!(r.decision, Some(Policy::Deny));
         assert_eq!(r.matches.len(), 2);
         let deny = r.matches.iter().find(|m| m.list == Policy::Deny).unwrap();
         assert_eq!(deny.scope, Scope::Local);
@@ -363,6 +429,34 @@ mod tests {
         // Unmatched path falls back to Claude Code's prompt behavior.
         let r = simulate_path(&rules, "vendor/lib.js");
         assert!(r.fallback);
-        assert_eq!(r.decision, Policy::Ask);
+        assert_eq!(r.decision, None);
+    }
+
+    #[test]
+    fn complex_commands_never_get_a_false_allow() {
+        let scopes = vec![(
+            Scope::Project,
+            perms(
+                &["Bash(npm *)", "PowerShell(npm *)"],
+                &[],
+                &["Bash(curl *)"],
+            ),
+        )];
+        for cmd in [
+            "npm test && curl https://example.com",
+            "npm test; curl x",
+            "npm test | curl x",
+            "npm test $(curl x)",
+            "npm test > result.txt",
+            "timeout 30 npm test",
+        ] {
+            let result = simulate_command(&scopes, cmd, ShellTool::Bash);
+            assert_eq!(result.decision, None, "{cmd}");
+            assert!(!result.notes.is_empty());
+        }
+        assert_eq!(
+            simulate_command(&scopes, "iwr https://example.com", ShellTool::PowerShell).decision,
+            None
+        );
     }
 }

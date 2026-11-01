@@ -16,6 +16,7 @@
   } from '$lib/ipc';
   import { setProject, refreshEffective } from '$lib/state.svelte';
   import { themeState, toggleTheme } from '$lib/theme.svelte';
+  import { toast } from '$lib/toast.svelte';
   import HelpButton from '$lib/components/HelpButton.svelte';
 
   let info = $state<AppInfo | null>(null);
@@ -23,17 +24,35 @@
   let agents = $state<AgentGlobal[]>([]);
   let error = $state<string | null>(null);
   let busy = $state(false);
-  let diagnosticStatus = $state<string | null>(null);
+  let loading = $state(true);
+  let copying = $state(false);
+  const desktop = inTauri();
+  const themeLabel = $derived(themeState.current === 'dark' ? '라이트' : '다크');
 
   onMount(async () => {
-    try {
-      info = await appInfo();
-      recent = await listRecentProjects();
-      agents = await listAgentGlobals();
-    } catch (e) {
-      error = String(e);
-    }
+    const [i, r, a] = await Promise.allSettled([appInfo(), listRecentProjects(), listAgentGlobals()]);
+    if (i.status === 'fulfilled') info = i.value;
+    if (r.status === 'fulfilled') recent = r.value;
+    if (a.status === 'fulfilled') agents = a.value;
+    const failed = [i, r, a].find((x) => x.status === 'rejected');
+    if (failed && desktop) error = String((failed as PromiseRejectedResult).reason);
+    loading = false;
   });
+
+  function displayPath(path: string) {
+    return path.includes('\\') ? path.replaceAll('/', '\\') : path;
+  }
+
+  function formatOpened(at: string) {
+    const d = new Date(at);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('ko-KR', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
 
   async function open(path: string | null) {
     if (!path) return;
@@ -53,7 +72,7 @@
   }
 
   async function onOpenClick() {
-    if (!inTauri()) {
+    if (!desktop) {
       error = '데스크톱 앱에서만 폴더를 열 수 있습니다 (npm run tauri dev).';
       return;
     }
@@ -61,12 +80,15 @@
   }
 
   async function copyDiagnostics() {
+    copying = true;
     try {
       const report = await diagnosticReport();
       await navigator.clipboard.writeText(report);
-      diagnosticStatus = '비밀값을 제외한 진단 정보를 클립보드에 복사했습니다.';
+      toast('비밀값을 제외한 진단 정보를 클립보드에 복사했습니다.');
     } catch (e) {
-      error = String(e);
+      toast(`진단 정보 복사 실패: ${String(e)}`, 'error');
+    } finally {
+      copying = false;
     }
   }
 </script>
@@ -74,11 +96,11 @@
 <main>
   <header class="hero">
     <div class="logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="52" height="52" fill="none">
+      <svg viewBox="0 0 24 24" width="44" height="44" fill="none">
         <defs>
           <linearGradient id="ag-shield" x1="4" y1="2" x2="20" y2="22" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#60a5fa" />
-            <stop offset="1" stop-color="#2563eb" />
+            <stop offset="0" style="stop-color: var(--accent-text)" />
+            <stop offset="1" style="stop-color: var(--accent-strong)" />
           </linearGradient>
         </defs>
         <path
@@ -91,7 +113,7 @@
         />
         <path
           d="m8.6 11.8 2.4 2.4 4.4-4.6"
-          stroke="#7db2fb"
+          style="stroke: var(--accent-text)"
           stroke-width="1.8"
           stroke-linecap="round"
           stroke-linejoin="round"
@@ -105,13 +127,12 @@
       </p>
     </div>
     <div class="hero-actions">
-      <button class="theme-toggle" onclick={copyDiagnostics} title="진단 정보 복사">진단 복사</button>
       <HelpButton section="home" />
       <button
         class="theme-toggle"
         onclick={toggleTheme}
         title={themeState.current === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'}
-        aria-label="테마 전환"
+        aria-label="{themeLabel} 테마로 전환"
       >
         {#if themeState.current === 'dark'}
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
@@ -123,7 +144,6 @@
               stroke-linecap="round"
             />
           </svg>
-          라이트
         {:else}
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
             <path
@@ -133,16 +153,15 @@
               stroke-linejoin="round"
             />
           </svg>
-          다크
         {/if}
+        {themeLabel}
       </button>
     </div>
   </header>
 
   {#if error}
-    <p class="error" role="alert">{error}</p>
+    <p class="callout callout-error home-error" role="alert">{error}</p>
   {/if}
-  {#if diagnosticStatus}<p class="diagnostic-status" role="status">{diagnosticStatus}</p>{/if}
 
   <section class="actions">
     <button class="primary" onclick={onOpenClick} disabled={busy}>
@@ -167,8 +186,14 @@
       홈 폴더(<code>~/</code>)에서 발견한 코딩 에이전트의 전역 설정입니다. 클릭하면 해당 에이전트
       설정으로 바로 들어갑니다.
     </p>
-    {#if agents.length === 0}
-      <p class="muted">데스크톱 앱에서 실행하면 에이전트 설정 목록이 표시됩니다.</p>
+    {#if loading}
+      <p class="muted" role="status">불러오는 중…</p>
+    {:else if agents.length === 0}
+      <p class="muted">
+        {desktop
+          ? '발견한 에이전트 전역 설정이 없습니다.'
+          : '데스크톱 앱에서 실행하면 에이전트 설정 목록이 표시됩니다.'}
+      </p>
     {:else}
       <ul class="cards two-col">
         {#each agents as a (a.id)}
@@ -177,16 +202,16 @@
               <div class="card-top">
                 <span class="name">{a.name}</span>
                 <span class="tags">
-                  <span class="tag tag-{a.format}">{a.format.toUpperCase()}</span>
-                  {#if a.structured}<span class="tag tag-vis">Visual</span>{/if}
+                  <span class="chip">{a.format.toUpperCase()}</span>
+                  {#if a.structured}<span class="chip chip-accent">시각 편집</span>{/if}
                   {#if a.exists}
-                    <span class="tag tag-on"><span class="dot" aria-hidden="true"></span>설정됨</span>
+                    <span class="chip chip-allow"><span class="dot" aria-hidden="true"></span>설정됨</span>
                   {:else}
-                    <span class="tag tag-off">없음</span>
+                    <span class="chip">없음</span>
                   {/if}
                 </span>
               </div>
-              <div class="path">{a.path}</div>
+              <div class="path">{displayPath(a.path)}</div>
               <div class="meta">{a.description}</div>
             </button>
           </li>
@@ -200,23 +225,31 @@
       <h2>최근 프로젝트</h2>
       {#if recent.length}<span class="count">{recent.length}</span>{/if}
     </div>
-    {#if recent.length === 0}
-      <p class="muted">아직 열어본 프로젝트가 없습니다.</p>
+    {#if loading}
+      <p class="muted" role="status">불러오는 중…</p>
+    {:else if recent.length === 0}
+      <div class="empty">
+        <p class="empty-title">아직 열어본 프로젝트가 없습니다. 이렇게 시작하세요.</p>
+        <ol>
+          <li><strong>프로젝트 열기</strong>로 작업 폴더를 선택합니다.</li>
+          <li>민감 경로 후보와 위험 점수를 검토합니다.</li>
+          <li>허용·확인·차단 규칙을 정리해 저장합니다.</li>
+        </ol>
+      </div>
     {:else}
-      <ul class="cards">
+      <ul class="rows">
         {#each recent as p (p.id)}
+          {@const opened = formatOpened(p.lastOpenedAt)}
           <li>
-            <button class="card" onclick={() => open(p.path)} disabled={busy}>
-              <div class="card-top">
+            <button class="row" onclick={() => open(p.path)} disabled={busy}>
+              <span class="row-main">
                 <span class="name">{p.name}</span>
-                {#if p.riskLevel}
-                  <span class="risk risk-{p.riskLevel.toLowerCase()}">{p.riskLevel}</span>
-                {/if}
-              </div>
-              <div class="path">{p.path}</div>
-              <div class="meta">
-                {p.riskProfile ?? 'No profile'} · score {p.riskScore ?? '?'}
-              </div>
+                <span class="path">{displayPath(p.path)}</span>
+              </span>
+              {#if opened}<time class="when" datetime={p.lastOpenedAt}>{opened}</time>{/if}
+              <svg class="arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+                <path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
             </button>
           </li>
         {/each}
@@ -224,30 +257,44 @@
     {/if}
   </section>
 
-  {#if info}
-    <footer>{info.name} v{info.version} · db v{info.dbSchemaVersion} · {info.dataDir}</footer>
-  {/if}
+  <footer>
+    <span class="footer-info truncate">
+      {#if info}{info.name} v{info.version} · db v{info.dbSchemaVersion} · {displayPath(info.dataDir)}{/if}
+    </span>
+    {#if desktop}
+      <button class="btn btn-ghost btn-sm" onclick={copyDiagnostics} disabled={copying}>
+        {copying ? '복사 중…' : '진단 정보 복사'}
+      </button>
+    {/if}
+  </footer>
 </main>
 
 <style>
   main {
     max-width: 920px;
     margin: 0 auto;
-    padding: 3rem 1.5rem 2rem;
+    padding: 1.6rem 1.5rem 1.5rem;
   }
   .hero {
     display: flex;
     align-items: center;
-    gap: 1.1rem;
+    gap: 1rem;
+  }
+  .hero-text {
+    min-width: 0;
   }
   .hero-actions {
     margin-left: auto;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.5rem;
+    flex-shrink: 0;
+    align-self: flex-start;
+  }
+  .hero-actions :global(button) {
+    white-space: nowrap;
   }
   .theme-toggle {
-    align-self: flex-start;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -257,8 +304,9 @@
     border-radius: 999px;
     padding: 0.34rem 0.8rem;
     cursor: pointer;
-    font-size: 0.76rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
+    white-space: nowrap;
     transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
   }
   .theme-toggle:hover {
@@ -270,16 +318,16 @@
     flex-shrink: 0;
     display: grid;
     place-items: center;
-    width: 76px;
-    height: 76px;
-    border-radius: 22px;
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
     background: linear-gradient(160deg, var(--bg-3), var(--bg-1));
     border: 1px solid var(--border-strong);
-    box-shadow: var(--shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    box-shadow: var(--shadow-1);
   }
   h1 {
     margin: 0;
-    font-size: 2.1rem;
+    font-size: 1.9rem;
     letter-spacing: -0.03em;
     background: linear-gradient(100deg, var(--text-1) 55%, var(--accent-text));
     -webkit-background-clip: text;
@@ -288,11 +336,14 @@
   }
   .tagline {
     color: var(--text-2);
-    margin: 0.3rem 0 0;
+    margin: 0.25rem 0 0;
     text-wrap: pretty;
   }
+  .home-error {
+    margin-top: 1rem;
+  }
   .actions {
-    margin: 1.8rem 0 2.2rem;
+    margin: 1.3rem 0 1.6rem;
     display: flex;
     gap: 0.6rem;
     flex-wrap: wrap;
@@ -301,21 +352,21 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.7rem 1.35rem;
+    padding: 0.65rem 1.3rem;
     border-radius: var(--r-md);
-    border: 1px solid rgba(147, 197, 253, 0.25);
-    background: linear-gradient(180deg, #3b82f6, #2563eb);
-    color: white;
+    border: 1px solid var(--accent-line);
+    background: var(--accent-strong);
+    color: var(--on-accent);
     font-size: 0.98rem;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
-    box-shadow: 0 4px 18px rgba(37, 99, 235, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
-    transition: box-shadow var(--t-fast), transform var(--t-fast), filter var(--t-fast);
+    box-shadow: var(--glow-accent);
+    transition: background-color var(--t-fast), transform var(--t-fast);
   }
   button.primary:hover:not(:disabled) {
-    filter: brightness(1.08);
+    background: var(--accent-hover);
     transform: translateY(-1px);
-    box-shadow: 0 6px 24px rgba(37, 99, 235, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.18);
   }
   button.primary:active:not(:disabled) {
     transform: translateY(0);
@@ -325,7 +376,7 @@
     cursor: default;
   }
   section {
-    margin-bottom: 2rem;
+    margin-bottom: 1.6rem;
   }
   .sec-head {
     display: flex;
@@ -343,7 +394,7 @@
     color: var(--text-2);
   }
   .count {
-    font-size: 0.68rem;
+    font-size: var(--fs-xs);
     color: var(--text-3);
     background: var(--bg-2);
     border: 1px solid var(--border);
@@ -353,7 +404,7 @@
   }
   .sec-hint {
     color: var(--text-3);
-    font-size: 0.8rem;
+    font-size: var(--fs-md);
     margin: -0.2rem 0 0.8rem;
   }
   .sec-hint code {
@@ -369,46 +420,11 @@
     align-items: center;
     flex-shrink: 0;
   }
-  .tag {
-    font-size: 0.66rem;
-    font-weight: 600;
-    padding: 0.12rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    display: inline-flex;
-    align-items: center;
-    gap: 0.28rem;
-  }
-  .tag-json {
-    color: var(--accent-text);
-    border-color: rgba(79, 142, 247, 0.35);
-    background: var(--accent-soft);
-  }
-  .tag-toml {
-    color: var(--deny);
-    border-color: rgba(248, 113, 113, 0.3);
-    background: var(--deny-soft);
-  }
-  .tag-vis {
-    color: var(--allow);
-    border-color: rgba(52, 211, 153, 0.3);
-    background: var(--allow-soft);
-  }
-  .tag-on {
-    color: var(--allow);
-    border-color: rgba(52, 211, 153, 0.3);
-  }
-  .tag-on .dot {
+  .dot {
     width: 6px;
     height: 6px;
     border-radius: 999px;
     background: var(--allow);
-    box-shadow: 0 0 6px rgba(52, 211, 153, 0.8);
-  }
-  .tag-off {
-    color: var(--text-3);
-    border-color: var(--border);
   }
   .cards {
     list-style: none;
@@ -418,7 +434,7 @@
     gap: 0.6rem;
   }
   .cards.two-col {
-    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   }
   .card {
     width: 100%;
@@ -438,7 +454,8 @@
     transform: translateY(-1px);
     box-shadow: var(--shadow-2);
   }
-  .card:disabled {
+  .card:disabled,
+  .row:disabled {
     opacity: 0.6;
     cursor: default;
   }
@@ -458,7 +475,7 @@
   }
   .path {
     color: var(--text-3);
-    font-size: 0.76rem;
+    font-size: var(--fs-sm);
     font-family: var(--font-mono);
     margin-top: 0.25rem;
     overflow: hidden;
@@ -467,57 +484,98 @@
   }
   .meta {
     color: var(--text-2);
-    font-size: 0.79rem;
+    font-size: var(--fs-md);
     margin-top: 0.4rem;
   }
-  .risk {
-    font-size: 0.68rem;
-    font-weight: 700;
-    padding: 0.12rem 0.55rem;
-    border-radius: 999px;
+  .rows {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-1);
+    overflow: hidden;
+  }
+  .rows li + li {
+    border-top: 1px solid var(--border);
+  }
+  .row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.55rem 0.9rem;
+    border: 0;
+    background: transparent;
+    color: var(--text-1);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--t-fast);
+  }
+  .row:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  .row:hover:not(:disabled) .arrow {
+    color: var(--accent-text);
+  }
+  .row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+  }
+  .row-main .name {
     flex-shrink: 0;
+    max-width: 40%;
   }
-  .risk-high {
-    background: var(--deny-soft);
-    color: var(--deny);
-    border: 1px solid rgba(248, 113, 113, 0.35);
+  .row-main .path {
+    margin: 0;
+    min-width: 0;
   }
-  .risk-medium {
-    background: var(--ask-soft);
-    color: var(--ask);
-    border: 1px solid rgba(251, 191, 36, 0.35);
-  }
-  .risk-low {
-    background: var(--allow-soft);
-    color: var(--allow);
-    border: 1px solid rgba(52, 211, 153, 0.35);
-  }
-  .muted {
+  .when {
+    flex-shrink: 0;
     color: var(--text-3);
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .error {
-    color: var(--deny);
-    background: var(--deny-soft);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-    border-radius: var(--r-sm);
-    padding: 0.5rem 0.8rem;
-    font-size: 0.85rem;
+  .arrow {
+    flex-shrink: 0;
+    color: var(--text-3);
   }
-  .diagnostic-status {
-    color: var(--allow);
-    font-size: 0.78rem;
-    margin: 0.25rem 0 0.8rem;
+  .empty {
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--r-md);
+    padding: 0.8rem 1rem;
+    font-size: var(--fs-md);
+    color: var(--text-2);
+  }
+  .empty-title {
+    margin: 0 0 0.4rem;
+    color: var(--text-1);
+  }
+  .empty ol {
+    margin: 0;
+    padding-left: 1.2rem;
+    line-height: 1.7;
   }
   footer {
-    margin-top: 2.5rem;
-    padding-top: 1rem;
+    margin-top: 2rem;
+    padding-top: 0.8rem;
     border-top: 1px solid var(--border);
-    font-size: 0.74rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: var(--fs-sm);
     font-family: var(--font-mono);
     color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+  .footer-info {
+    flex: 1;
+  }
+  footer .btn {
+    flex-shrink: 0;
+    font-family: var(--font-sans);
   }
 </style>

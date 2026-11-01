@@ -69,6 +69,17 @@ pub struct ScanResult {
     pub deny_candidates: Vec<String>,
     /// Root-relative paths recommended for Allow.
     pub allow_candidates: Vec<String>,
+    /// Observations, not permission decisions. Only the project root is inspected.
+    #[serde(default)]
+    pub candidates: Vec<PathCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathCandidate {
+    pub path: String,
+    pub is_dir: bool,
+    pub reason: String,
 }
 
 const DENY_DIRS: [&str; 20] = [
@@ -159,6 +170,18 @@ pub fn scan(project_root: &Path) -> crate::Result<ScanResult> {
             if ALLOW_FILES.contains(&name) {
                 res.allow_candidates.push(entry.path.clone());
             }
+        }
+        if res.deny_candidates.contains(&entry.path) || res.allow_candidates.contains(&entry.path) {
+            let sensitive = res.deny_candidates.contains(&entry.path);
+            res.candidates.push(PathCandidate {
+                path: entry.path.clone(),
+                is_dir: entry.is_dir,
+                reason: if sensitive {
+                    "이름이 민감 정보 후보 패턴과 일치합니다. 실제 비밀값이나 차단 필요성은 확인하지 않았습니다."
+                } else {
+                    "이름이 일반적인 작업 경로 패턴과 일치합니다. 읽기·수정 허용이 필요한지는 작업에 따라 다릅니다."
+                }.into(),
+            });
         }
     }
 

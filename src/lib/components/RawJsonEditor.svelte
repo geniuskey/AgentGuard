@@ -9,6 +9,7 @@
   import { app } from '$lib/state.svelte';
   import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
   import { confirmDiscardChanges } from '$lib/unsaved';
+  import { toast } from '$lib/toast.svelte';
 
   // `lockScope` pins the editor to one scope (used by the project-less User settings
   // page) and hides the scope switcher.
@@ -19,19 +20,23 @@
   let text = $state('');
   let onDisk = $state('');
   let error = $state<string | null>(null);
-  let status = $state<string | null>(null);
   let loading = $state(false);
+  let saving = $state(false);
   let loadSequence = 0;
 
   const dirty = $derived(!loading && text !== onDisk);
   const unsavedId = $derived(`raw-settings-${lockScope ?? 'project'}`);
 
-  const scopes: ScopeName[] = ['user', 'project', 'local'];
+  const scopes: { id: ScopeName; label: string }[] = [
+    { id: 'user', label: '사용자' },
+    { id: 'project', label: '프로젝트' },
+    { id: 'local', label: '로컬' }
+  ];
+  const scopeLabel = (s: ScopeName) => scopes.find((x) => x.id === s)?.label ?? s;
 
   async function load(target: ScopeName) {
     const sequence = ++loadSequence;
     loading = true;
-    status = null;
     error = null;
     try {
       const loaded = await readRawSettings(app.projectRoot, target);
@@ -59,14 +64,14 @@
 
   async function validate() {
     error = await validateJson(text);
-    status = error ? null : '유효한 JSON입니다.';
+    if (!error) toast('유효한 JSON입니다.');
   }
 
   function format() {
     try {
       text = JSON.stringify(JSON.parse(text || '{}'), null, 2) + '\n';
       error = null;
-      status = '포맷 완료';
+      toast('JSON을 정렬했습니다.', 'info');
     } catch (e) {
       error = String(e);
     }
@@ -78,6 +83,7 @@
       error = v;
       return;
     }
+    saving = true;
     try {
       const res = await saveRawSettings({
         projectRoot: app.projectRoot,
@@ -86,11 +92,13 @@
         text,
         projectName: app.projectName
       });
-      status = `저장됨 → ${res.written}`;
+      toast(`저장됨 → ${res.written}`);
       error = null;
       onDisk = text;
     } catch (e) {
       error = String(e);
+    } finally {
+      saving = false;
     }
   }
 </script>
@@ -100,19 +108,19 @@
 <div class="panel">
   <div class="bar">
     {#if lockScope}
-      <div class="scope-label">{lockScope} scope</div>
+      <span class="chip chip-accent scope-label">{scopeLabel(lockScope)} 범위</span>
     {:else}
-      <div class="segmented">
-        {#each scopes as s (s)}
-          <button class:active={scope === s} onclick={() => selectScope(s)}>{s}</button>
+      <div class="segmented" role="group" aria-label="설정 범위">
+        {#each scopes as s (s.id)}
+          <button aria-pressed={scope === s.id} onclick={() => selectScope(s.id)}>{s.label}</button>
         {/each}
       </div>
     {/if}
     <div class="tools">
-      <button onclick={validate}>Validate</button>
-      <button onclick={format}>Format</button>
-      <button class="primary" class:dirty onclick={save} disabled={!dirty}>
-        {dirty ? 'Save' : 'Saved'}
+      <button class="btn btn-sm" onclick={validate} disabled={loading}>검사</button>
+      <button class="btn btn-sm" onclick={format} disabled={loading}>정렬</button>
+      <button class="btn btn-sm btn-primary" onclick={save} disabled={!dirty || saving}>
+        {saving ? '저장 중…' : dirty ? '저장' : '저장됨'}
       </button>
     </div>
   </div>
@@ -120,11 +128,10 @@
   {#if loading}
     <p class="muted">불러오는 중…</p>
   {:else}
-    <textarea bind:value={text} spellcheck="false" placeholder="{'{}'}"></textarea>
+    <textarea bind:value={text} spellcheck="false" placeholder="{'{}'}" aria-label="{scopeLabel(scope)} 범위 설정 JSON"></textarea>
   {/if}
 
-  {#if error}<p class="err" role="alert">JSON 오류: {error}</p>{/if}
-  {#if status}<p class="ok" role="status">{status}</p>{/if}
+  {#if error}<p class="callout callout-error err" role="alert">JSON 오류: {error}</p>{/if}
 </div>
 
 <style>
@@ -142,41 +149,7 @@
     gap: 0.5rem;
     margin-bottom: 0.5rem;
   }
-  .segmented {
-    display: flex;
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.15rem;
-    gap: 0.15rem;
-  }
-  .segmented button {
-    padding: 0.2rem 0.55rem;
-    background: transparent;
-    border: none;
-    color: var(--text-2);
-    border-radius: 4px;
-    cursor: pointer;
-    text-transform: capitalize;
-    font-size: 0.75rem;
-    transition: background-color var(--t-fast), color var(--t-fast);
-  }
-  .segmented button:hover {
-    color: var(--text-1);
-  }
-  .segmented button.active {
-    background: var(--bg-3);
-    color: var(--accent-text);
-  }
   .scope-label {
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--accent-text);
-    background: var(--accent-soft);
-    border: 1px solid rgba(79, 142, 247, 0.3);
-    border-radius: 999px;
-    padding: 0.1rem 0.6rem;
-    text-transform: capitalize;
     align-self: center;
   }
   .tools {
@@ -186,34 +159,8 @@
     max-width: 100%;
     overflow-x: auto;
   }
-  .tools button {
+  .tools .btn {
     flex-shrink: 0;
-    padding: 0.28rem 0.65rem;
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    color: var(--text-1);
-    border-radius: var(--r-sm);
-    cursor: pointer;
-    font-size: 0.75rem;
-    transition: background-color var(--t-fast), border-color var(--t-fast);
-  }
-  .tools button:hover {
-    background: var(--bg-3);
-  }
-  .tools .primary {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-    color: white;
-    font-weight: 600;
-  }
-  .tools .primary:hover {
-    background: #3b76ee;
-  }
-  .tools .primary:not(.dirty) {
-    background: var(--bg-2);
-    border-color: var(--border);
-    color: var(--text-3);
-    cursor: default;
   }
   textarea {
     flex: 1;
@@ -233,18 +180,11 @@
   textarea:focus {
     border-color: var(--accent);
     outline: none;
-  }
-  .muted {
-    color: var(--text-3);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .err {
-    color: var(--deny);
-    font-size: 0.78rem;
-    margin: 0.4rem 0 0;
-  }
-  .ok {
-    color: var(--allow);
-    font-size: 0.78rem;
-    margin: 0.4rem 0 0;
+    margin-top: 0.4rem;
+    font-size: var(--fs-sm);
+    overflow-wrap: anywhere;
   }
 </style>

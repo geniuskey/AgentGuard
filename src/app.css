@@ -30,6 +30,7 @@
   --ask-soft: rgba(251, 191, 36, 0.13);
   --deny-soft: rgba(248, 113, 113, 0.13);
 
+  --r-xs: 4px;
   --r-sm: 6px;
   --r-md: 10px;
   --r-lg: 14px;
@@ -38,6 +39,25 @@
   --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
   --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.65);
   --glow-accent: 0 0 0 1px rgba(79, 142, 247, 0.35), 0 4px 20px rgba(37, 99, 235, 0.35);
+
+  --accent-hover: #3b76ee;
+  --accent-line: rgba(79, 142, 247, 0.38);
+  --on-accent: #ffffff;
+
+  --allow-line: rgba(52, 211, 153, 0.38);
+  --ask-line: rgba(251, 191, 36, 0.38);
+  --deny-line: rgba(248, 113, 113, 0.38);
+  --allow-soft-hover: rgba(52, 211, 153, 0.22);
+  --ask-soft-hover: rgba(251, 191, 36, 0.22);
+  --deny-soft-hover: rgba(248, 113, 113, 0.22);
+  --on-policy: #0b1220;
+
+  --hover: rgba(148, 170, 214, 0.08);
+
+  --fs-xs: 0.68rem;
+  --fs-sm: 0.74rem;
+  --fs-md: 0.8rem;
+  --fs-lg: 0.9rem;
 
   --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system,
     'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
@@ -73,6 +93,17 @@
   --allow-soft: rgba(4, 120, 87, 0.1);
   --ask-soft: rgba(180, 83, 9, 0.1);
   --deny-soft: rgba(220, 38, 38, 0.08);
+
+  --accent-hover: #1d4ed8;
+  --accent-line: rgba(37, 99, 235, 0.35);
+  --allow-line: rgba(4, 120, 87, 0.35);
+  --ask-line: rgba(180, 83, 9, 0.35);
+  --deny-line: rgba(220, 38, 38, 0.32);
+  --allow-soft-hover: rgba(4, 120, 87, 0.17);
+  --ask-soft-hover: rgba(180, 83, 9, 0.17);
+  --deny-soft-hover: rgba(220, 38, 38, 0.14);
+  --on-policy: #ffffff;
+  --hover: rgba(23, 37, 66, 0.05);
 
   --shadow-1: 0 1px 2px rgba(23, 37, 66, 0.08);
   --shadow-2: 0 10px 30px rgba(23, 37, 66, 0.12);
@@ -218,10 +249,10 @@ select {
 .modal-actions .primary {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
-  color: white;
+  color: var(--on-accent);
 }
 .modal-actions .primary:hover {
-  background: #3b76ee;
+  background: var(--accent-hover);
 }
 .modal-actions .primary:disabled {
   opacity: 0.5;
@@ -280,4 +311,222 @@ select {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---------- Shared primitives ----------
+   Components should prefer these over re-declaring button/chip/callout styles. */
+
+body {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.38rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--t-fast),
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+.btn:hover:not(:disabled) {
+  background: var(--bg-3);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--on-accent);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text-1);
+}
+.btn-danger {
+  color: var(--deny);
+  border-color: var(--deny-line);
+  background: var(--deny-soft);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--deny-soft-hover);
+}
+.btn-sm {
+  padding: 0.24rem 0.6rem;
+  font-size: var(--fs-sm);
+}
+.btn-icon {
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+}
+.btn-sm.btn-icon {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.chip-allow { color: var(--allow); background: var(--allow-soft); border-color: var(--allow-line); }
+.chip-ask { color: var(--ask); background: var(--ask-soft); border-color: var(--ask-line); }
+.chip-deny { color: var(--deny); background: var(--deny-soft); border-color: var(--deny-line); }
+.chip-accent { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-line); }
+
+.callout {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+}
+.callout-info { border-color: var(--accent-line); border-left-color: var(--accent); background: var(--accent-soft); }
+.callout-ok { border-color: var(--allow-line); border-left-color: var(--allow); background: var(--allow-soft); }
+.callout-warn { border-color: var(--ask-line); border-left-color: var(--ask); background: var(--ask-soft); }
+.callout-error { border-color: var(--deny-line); border-left-color: var(--deny); background: var(--deny-soft); }
+.callout code {
+  background: var(--bg-3);
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--r-xs);
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-md);
+}
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.label-caps {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  transition: border-color var(--t-fast);
+}
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-1);
+}
+.segmented > button {
+  padding: 0.3rem 0.75rem;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--t-fast), color var(--t-fast);
+}
+.segmented > button:hover {
+  color: var(--text-1);
+}
+.segmented > button[aria-pressed='true'],
+.segmented > button[aria-selected='true'] {
+  background: var(--bg-3);
+  color: var(--text-1);
+  box-shadow: var(--shadow-1);
+}
+
+/* Toasts rendered by src/lib/components/Toaster.svelte. */
+.ag-toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(380px, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.ag-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  background: var(--bg-1);
+  box-shadow: var(--shadow-2);
+  animation: ag-rise-in 170ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ag-toast span {
+  flex: 1;
+  min-width: 0;
+}
+.ag-toast .btn {
+  margin: -0.15rem -0.2rem -0.15rem 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }

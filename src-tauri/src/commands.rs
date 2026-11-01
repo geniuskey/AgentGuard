@@ -7,7 +7,7 @@ use agentguard_core::db::{self, ProjectRecord};
 use agentguard_core::effective::{self, EffectivePolicy, ScopedRules};
 use agentguard_core::fs_scan::{self, DirEntry, ScanResult};
 use agentguard_core::inspect::{self, HookEntry, McpServer};
-use agentguard_core::model::{AppliesTo, Policy, PolicyRule, RiskLevel, Scope};
+use agentguard_core::model::{AppliesTo, Policy, PolicyRule, Scope};
 use agentguard_core::policy::{self, Permissions};
 use agentguard_core::risk::{self, RiskScore};
 use agentguard_core::simulate::{self, SimResult};
@@ -143,6 +143,8 @@ fn sync_sensitive_paths(
         .collect();
     scan.deny_candidates
         .retain(|candidate| !dismissed.contains(candidate.as_str()));
+    scan.candidates
+        .retain(|candidate| !dismissed.contains(candidate.path.as_str()));
     Ok(records)
 }
 
@@ -241,6 +243,9 @@ pub struct ScopeRules {
     /// only rules considered for allow/ask/deny decisions.
     #[serde(default)]
     pub enforce_managed_only: bool,
+    /// Read-only whole-tool Read/Edit permissions, kept outside path editing.
+    #[serde(default)]
+    pub whole_tool_rules: Vec<PolicyRule>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -257,21 +262,42 @@ impl ScopedRulesDto {
     fn to_core(&self) -> ScopedRules {
         let managed_only = self.managed.enforce_managed_only;
         ScopedRules {
-            managed: self.managed.rules.clone(),
+            managed: self
+                .managed
+                .rules
+                .iter()
+                .chain(&self.managed.whole_tool_rules)
+                .cloned()
+                .collect(),
             user: if managed_only {
                 Vec::new()
             } else {
-                self.user.rules.clone()
+                self.user
+                    .rules
+                    .iter()
+                    .chain(&self.user.whole_tool_rules)
+                    .cloned()
+                    .collect()
             },
             project: if managed_only {
                 Vec::new()
             } else {
-                self.project.rules.clone()
+                self.project
+                    .rules
+                    .iter()
+                    .chain(&self.project.whole_tool_rules)
+                    .cloned()
+                    .collect()
             },
             local: if managed_only {
                 Vec::new()
             } else {
-                self.local.rules.clone()
+                self.local
+                    .rules
+                    .iter()
+                    .chain(&self.local.whole_tool_rules)
+                    .cloned()
+                    .collect()
             },
         }
     }
@@ -296,6 +322,25 @@ fn program_files_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
 }
 
+fn whole_tool_rules(permissions: &Permissions) -> Vec<PolicyRule> {
+    let mut rules = Vec::new();
+    for (policy, list) in [
+        (Policy::Allow, &permissions.allow),
+        (Policy::Ask, &permissions.ask),
+        (Policy::Deny, &permissions.deny),
+    ] {
+        for raw in list {
+            if let Some(tool) = agentguard_core::Tool::from_str(raw.trim()) {
+                let mut rule = PolicyRule::new("//**", policy, AppliesTo::Pattern);
+                rule.tools = Some(vec![tool]);
+                rule.reason = Some(format!("전체 도구 규칙: {raw}"));
+                rules.push(rule);
+            }
+        }
+    }
+    rules
+}
+
 fn managed_scope() -> ScopeRules {
     let program_files = program_files_dir();
     let Some(loaded) = settings::load_file_managed_settings(&program_files) else {
@@ -314,6 +359,7 @@ fn managed_scope() -> ScopeRules {
         .unwrap_or(false);
     ScopeRules {
         rules,
+        whole_tool_rules: whole_tool_rules(&loaded.permissions),
         extra_deny,
         enforce_managed_only,
     }
@@ -339,9 +385,7 @@ fn merge_stored_rule_metadata(dto: &mut ScopedRulesDto, stored: Vec<db::ScopedRu
         else {
             continue;
         };
-        if saved.rule.tools.is_some() {
-            rule.tools = saved.rule.tools;
-        }
+        // Tool subsets are permissions from disk, never SQLite annotations.
         rule.reason = saved.rule.reason;
         rule.risk_level = saved.rule.risk_level;
         rule.notes = saved.rule.notes;
@@ -361,6 +405,7 @@ fn read_scope(root: &Path, scope: Scope) -> Result<ScopeRules, String> {
         .collect();
     Ok(ScopeRules {
         rules,
+        whole_tool_rules: whole_tool_rules(&loaded.permissions),
         extra_deny,
         enforce_managed_only: false,
     })
@@ -415,8 +460,18 @@ pub fn claude_project_trust_status(project_root: String) -> Result<ClaudeProject
 
 /// Compute the effective (merged) policy for every distinct rule path.
 #[tauri::command]
-pub fn compute_effective(scoped: ScopedRulesDto) -> Result<Vec<EffectivePolicy>, String> {
-    Ok(effective::compute_all(&scoped.to_core()))
+pub fn compute_effective(
+    scoped: ScopedRulesDto,
+    project_root: Option<String>,
+) -> Result<Vec<EffectivePolicy>, String> {
+    let context = effective::MatchContext {
+        project_root: project_root.unwrap_or_default(),
+        home: paths::home_dir()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    Ok(effective::compute_all_in(&scoped.to_core(), &context))
 }
 
 /// Effective policy for a single path (used for file-tree badges).
@@ -424,8 +479,22 @@ pub fn compute_effective(scoped: ScopedRulesDto) -> Result<Vec<EffectivePolicy>,
 pub fn effective_for(
     scoped: ScopedRulesDto,
     target_path: String,
+    project_root: Option<String>,
+    path_tool: Option<agentguard_core::Tool>,
 ) -> Result<EffectivePolicy, String> {
-    Ok(effective::compute_for(&scoped.to_core(), &target_path))
+    let context = effective::MatchContext {
+        project_root: project_root.unwrap_or_default(),
+        home: paths::home_dir()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    Ok(effective::compute_for_tool(
+        &scoped.to_core(),
+        &target_path,
+        path_tool.unwrap_or(agentguard_core::Tool::Read),
+        &context,
+    ))
 }
 
 /// The raw `Tool(specifier)` strings a rule set would emit (Raw Rules preview tab).
@@ -521,10 +590,19 @@ pub fn save_settings(
     scope_rules: ScopeRules,
     timestamp: String,
     project_name: String,
+    expected_before: Option<String>,
 ) -> Result<SaveResult, String> {
     let root = PathBuf::from(&project_root);
     // Render first — if conversion fails we abort before touching the disk.
-    let (file, _before, after) = render_scope(&root, scope, &scope_rules)?;
+    let (file, before, after) = render_scope(&root, scope, &scope_rules)?;
+    if expected_before
+        .as_ref()
+        .is_some_and(|expected| expected != &before)
+    {
+        return Err(
+            "설정 파일이 Diff 확인 후 변경되었습니다. 다시 불러오고 변경 내용을 검토하세요.".into(),
+        );
+    }
 
     // Back up existing file.
     let backups = paths::backups_dir().map_err(|e| e.to_string())?;
@@ -793,10 +871,7 @@ pub fn scan_recommendation_rules(
     {
         sync_sensitive_paths(&mut conn, &project.id, &mut scan)?;
     }
-    Ok(agentguard_core::profiles::baseline_rules(
-        agentguard_core::profiles::Profile::Conservative,
-        &scan,
-    ))
+    Ok(agentguard_core::profiles::review_candidates(&scan))
 }
 
 /// Baseline rules for a named profile (applied after user confirms in the Diff).
@@ -818,7 +893,7 @@ pub fn apply_profile(
         db::get_project_by_path(&conn, &project_root).map_err(|e| e.to_string())?
     {
         sync_sensitive_paths(&mut conn, &project.id, &mut scan)?;
-        db::set_project_profile(&conn, &project.id, Some(&profile)).map_err(|e| e.to_string())?;
+        // A preview must not persist a selected profile before rules are saved.
     }
     Ok(ProfilePlan {
         rules: agentguard_core::profiles::baseline_rules(p, &scan),
@@ -881,8 +956,16 @@ pub fn policy_report(
     scoped: ScopedRulesDto,
     risk_score: u32,
     risk_level: String,
+    project_root: Option<String>,
 ) -> Result<String, String> {
-    let effective = effective::compute_all(&scoped.to_core());
+    let context = effective::MatchContext {
+        project_root: project_root.unwrap_or_default(),
+        home: paths::home_dir()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let effective = effective::compute_all_in(&scoped.to_core(), &context);
     let level = match risk_level.to_lowercase().as_str() {
         "high" => agentguard_core::model::RiskLevel::High,
         "medium" => agentguard_core::model::RiskLevel::Medium,
@@ -1338,8 +1421,7 @@ pub fn security_baseline_rules() -> Result<Vec<PolicyRule>, String> {
         .into_iter()
         .map(|p| {
             let mut r = PolicyRule::new(p, Policy::Deny, AppliesTo::Pattern);
-            r.reason = Some("보안 베이스라인 — 민감 파일/자격증명/시스템 경로 차단".into());
-            r.risk_level = Some(RiskLevel::High);
+            r.reason = Some("자격증명·키·시스템 파일에 자주 쓰이는 경로 패턴입니다. 실제 비밀값 유무나 차단 필요성은 검증하지 않았습니다.".into());
             r
         })
         .collect())
@@ -1836,9 +1918,29 @@ pub fn simulate_access(
     query: String,
     kind: String,
     shell_tool: Option<String>,
+    path_tool: Option<String>,
 ) -> Result<SimResult, String> {
     match kind.as_str() {
-        "path" => Ok(simulate::simulate_path(&scoped.to_core(), &query)),
+        "path" => {
+            let tool = match path_tool.as_deref().unwrap_or("Read") {
+                "Read" => agentguard_core::Tool::Read,
+                "Edit" => agentguard_core::Tool::Edit,
+                other => return Err(format!("unknown path tool: {other}")),
+            };
+            let context = effective::MatchContext {
+                project_root,
+                home: paths::home_dir()
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .into_owned(),
+            };
+            Ok(simulate::simulate_path_for(
+                &scoped.to_core(),
+                &query,
+                tool,
+                &context,
+            ))
+        }
         "command" => {
             let root = PathBuf::from(&project_root);
             let mut perms = Vec::new();
@@ -1846,11 +1948,24 @@ pub fn simulate_access(
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
             if let Some(loaded) = settings::load_file_managed_settings(&program_files) {
+                let only_managed = loaded
+                    .raw
+                    .get("allowManagedPermissionRulesOnly")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
                 perms.push((Scope::Managed, loaded.permissions));
+                if only_managed {
+                    let tool = match shell_tool.as_deref().unwrap_or("PowerShell") {
+                        "Bash" => simulate::ShellTool::Bash,
+                        "PowerShell" => simulate::ShellTool::PowerShell,
+                        other => return Err(format!("unknown shell tool: {other}")),
+                    };
+                    return Ok(simulate::simulate_command(&perms, &query, tool));
+                }
             }
             for scope in [Scope::User, Scope::Project, Scope::Local] {
                 let file = scope_file(&root, scope)?;
-                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let text = read_optional_text(&file)?;
                 let loaded = settings::parse(scope, &text).map_err(|e| e.to_string())?;
                 perms.push((scope, loaded.permissions));
             }
@@ -1999,6 +2114,7 @@ pub fn unwatch_project(state: State<WatchState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentguard_core::model::RiskLevel;
 
     #[test]
     fn stored_metadata_is_restored_only_to_matching_scope_path_and_policy() {
@@ -2036,7 +2152,10 @@ mod tests {
         );
 
         let src = &dto.project.rules[0];
-        assert_eq!(src.tools, Some(vec![agentguard_core::Tool::Read]));
+        assert_eq!(
+            src.tools, None,
+            "on-disk tool permissions must win over stale metadata"
+        );
         assert_eq!(src.reason.as_deref(), Some("source code"));
         assert_eq!(src.risk_level, Some(RiskLevel::Low));
         assert_eq!(src.notes.as_deref(), Some("reviewed"));
@@ -2082,6 +2201,35 @@ mod tests {
     }
 
     #[test]
+    fn bare_file_tool_deny_participates_in_path_comparison() {
+        let rules = whole_tool_rules(&Permissions {
+            deny: vec!["Read".into()],
+            ..Default::default()
+        });
+        let dto = ScopedRulesDto {
+            user: ScopeRules {
+                whole_tool_rules: rules,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let context = effective::MatchContext {
+            project_root: "C:/repo".into(),
+            home: "C:/Users/u".into(),
+        };
+        assert_eq!(
+            effective::compute_for_tool(
+                &dto.to_core(),
+                "src/a.ts",
+                agentguard_core::Tool::Read,
+                &context
+            )
+            .effective,
+            Some(Policy::Deny)
+        );
+    }
+
+    #[test]
     fn web_block_covers_windows_and_bash_http_clients() {
         let unique: std::collections::HashSet<_> = WEB_DENY.iter().collect();
         assert_eq!(unique.len(), WEB_DENY.len(), "duplicate web deny rule");
@@ -2095,22 +2243,31 @@ mod tests {
         )];
         for command in ["curl https://example.com", "wget https://example.com"] {
             let result = simulate::simulate_command(&perms, command, simulate::ShellTool::Bash);
-            assert_eq!(result.decision, Policy::Deny, "{command}");
+            assert_eq!(result.decision, Some(Policy::Deny), "{command}");
         }
         for command in [
             "Invoke-WebRequest https://example.com",
             "Invoke-RestMethod https://example.com",
             "Start-BitsTransfer https://example.com C:/Temp/probe",
-            "iwr https://example.com",
-            "irm https://example.com",
-            "curl https://example.com",
-            "wget https://example.com",
             "curl.exe https://example.com",
             "wget.exe https://example.com",
         ] {
             let result =
                 simulate::simulate_command(&perms, command, simulate::ShellTool::PowerShell);
-            assert_eq!(result.decision, Policy::Deny, "{command}");
+            assert_eq!(result.decision, Some(Policy::Deny), "{command}");
+        }
+        for command in [
+            "iwr https://example.com",
+            "irm https://example.com",
+            "curl https://example.com",
+            "wget https://example.com",
+        ] {
+            let result =
+                simulate::simulate_command(&perms, command, simulate::ShellTool::PowerShell);
+            assert_eq!(
+                result.decision, None,
+                "aliases need real shell resolution: {command}"
+            );
         }
     }
 }

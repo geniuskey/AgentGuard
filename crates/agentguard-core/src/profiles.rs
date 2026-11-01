@@ -1,4 +1,4 @@
-//! Security profiles → baseline rule mapping.
+//! Review candidate construction and legacy profile mapping (not offered in the UI).
 //! See `docs/effective-policy.md` §2 and D2.
 
 use crate::fs_scan::ScanResult;
@@ -12,23 +12,38 @@ pub enum Profile {
     Conservative,
     /// Sensitive paths denied, general source allowed, uncertain paths ask.
     Balanced,
-    /// Only sensitive patterns denied; everything else open.
+    /// Legacy mapping: sensitive candidates only; unmatched access is not decided here.
     FastDev,
     /// No automatic rules; the user drives everything.
     Custom,
 }
 
 /// Infer how a scanned candidate path should be applied.
-fn infer_applies_to(path: &str) -> AppliesTo {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    if name == ".env" || name.starts_with(".env.") {
-        AppliesTo::Pattern
-    } else if name.contains('.') {
-        // has an extension -> treat as a single file
-        AppliesTo::File
-    } else {
+fn infer_applies_to(path: &str, scan: &ScanResult) -> AppliesTo {
+    // File kind comes from the filesystem, never from an extension heuristic.
+    if scan
+        .candidates
+        .iter()
+        .any(|item| item.path == path && item.is_dir)
+    {
         AppliesTo::FolderAndChildren
+    } else {
+        AppliesTo::File
     }
+}
+
+/// Observations for explicit user review. Do not preselect Allow or Deny.
+pub fn review_candidates(scan: &ScanResult) -> Vec<PolicyRule> {
+    scan.candidates
+        .iter()
+        .map(|item| {
+            let mut rule =
+                PolicyRule::new(&item.path, Policy::Ask, infer_applies_to(&item.path, scan));
+            rule.tools = Some(vec![crate::Tool::Read]);
+            rule.reason = Some(item.reason.clone());
+            rule
+        })
+        .collect()
 }
 
 /// Build the baseline rule set for `profile` from a project scan.
@@ -38,8 +53,17 @@ fn infer_applies_to(path: &str) -> AppliesTo {
 /// allow source; Fast Dev only denies; Custom returns nothing.
 pub fn baseline_rules(profile: Profile, scan: &ScanResult) -> Vec<PolicyRule> {
     let mut rules = Vec::new();
-    let deny = |p: &str| PolicyRule::new(p, Policy::Deny, infer_applies_to(p));
-    let allow = |p: &str| PolicyRule::new(p, Policy::Allow, infer_applies_to(p));
+    let candidate = |p: &str, policy| {
+        let mut rule = PolicyRule::new(p, policy, infer_applies_to(p, scan));
+        rule.reason = scan
+            .candidates
+            .iter()
+            .find(|item| item.path == p)
+            .map(|item| item.reason.clone());
+        rule
+    };
+    let deny = |p: &str| candidate(p, Policy::Deny);
+    let allow = |p: &str| candidate(p, Policy::Allow);
 
     match profile {
         Profile::Custom => {}
@@ -93,13 +117,40 @@ mod tests {
 
     #[test]
     fn applies_to_inference() {
-        assert_eq!(infer_applies_to(".env"), AppliesTo::Pattern);
-        assert_eq!(infer_applies_to("README.md"), AppliesTo::File);
-        assert_eq!(infer_applies_to("src"), AppliesTo::FolderAndChildren);
+        let mut scan = scan();
+        scan.candidates.push(crate::fs_scan::PathCandidate {
+            path: "src".into(),
+            is_dir: true,
+            reason: String::new(),
+        });
+        assert_eq!(infer_applies_to(".env", &scan), AppliesTo::File);
+        assert_eq!(infer_applies_to("id_rsa", &scan), AppliesTo::File);
+        assert_eq!(infer_applies_to("id_ed25519", &scan), AppliesTo::File);
+        assert_eq!(infer_applies_to("README.md", &scan), AppliesTo::File);
+        assert_eq!(infer_applies_to("src", &scan), AppliesTo::FolderAndChildren);
     }
 
     #[test]
     fn custom_returns_nothing() {
         assert!(baseline_rules(Profile::Custom, &scan()).is_empty());
+    }
+    #[test]
+    fn scanned_extensionless_keys_emit_exact_file_rules() {
+        let root =
+            std::env::temp_dir().join(format!("agentguard-candidates-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for key in ["id_rsa", "id_ed25519"] {
+            std::fs::write(root.join(key), "test fixture").unwrap();
+        }
+        let scan = crate::fs_scan::scan(&root).unwrap();
+        let candidates = review_candidates(&scan);
+        assert!(candidates
+            .iter()
+            .all(|rule| rule.policy == Policy::Ask && rule.tools == Some(vec![crate::Tool::Read])));
+        let emitted = crate::policy::to_permissions(&candidates);
+        assert!(emitted.ask.contains(&"Read(./id_rsa)".into()));
+        assert!(emitted.ask.contains(&"Read(./id_ed25519)".into()));
+        assert!(emitted.ask.contains(&"Read(./src/**)".into()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

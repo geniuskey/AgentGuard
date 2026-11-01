@@ -15,7 +15,7 @@
     agent = null;
     error = null;
     if (!currentId) {
-      error = 'agent id가 지정되지 않았습니다.';
+      error = '에이전트 id가 지정되지 않았습니다.';
       return;
     }
     if (!inTauri()) return;
@@ -34,7 +34,7 @@
 
 <main>
   <div class="top">
-    <button class="back" onclick={() => goto('/')} aria-label="홈으로">←</button>
+    <button class="btn btn-ghost btn-icon" onclick={() => goto('/')} aria-label="홈으로" title="홈으로">←</button>
     <div class="title">
       {#if agent}{agent.name}{:else}에이전트 설정{/if}
     </div>
@@ -47,9 +47,9 @@
   {/if}
 
   {#if !inTauri()}
-    <p class="hint">데스크톱 앱에서만 편집할 수 있습니다 (npm run tauri dev).</p>
+    <p class="callout callout-warn notice">데스크톱 앱에서만 편집할 수 있습니다 (npm run tauri dev).</p>
   {/if}
-  {#if error}<div class="err" role="alert">{error}</div>{/if}
+  {#if error}<div class="callout callout-error notice" role="alert">{error}</div>{/if}
 
   {#if agent}
     <div class="editor">
@@ -75,54 +75,29 @@
   .help-slot {
     margin-left: auto;
   }
-  .back {
-    background: none;
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.28rem 0.6rem;
-    cursor: pointer;
-    transition: color var(--t-fast), background-color var(--t-fast);
-  }
-  .back:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
   .title {
     font-weight: 600;
     font-size: 1.05rem;
     letter-spacing: -0.01em;
+    white-space: nowrap;
   }
   .path {
     background: var(--bg-1);
     border: 1px solid var(--border);
     padding: 0.15rem 0.55rem;
     border-radius: 4px;
-    font-size: 0.76rem;
+    font-size: var(--fs-sm);
     color: var(--text-2);
     word-break: break-all;
+    min-width: 0;
   }
   .tagline {
     color: var(--text-2);
-    font-size: 0.85rem;
+    font-size: var(--fs-md);
     margin: 0.6rem 0;
   }
-  .hint {
-    color: var(--ask);
-    background: var(--ask-soft);
-    border-radius: var(--r-sm);
-    padding: 0.35rem 0.6rem;
-    font-size: 0.8rem;
+  .notice {
     margin: 0.6rem 0 0.4rem;
-  }
-  .err {
-    background: var(--deny-soft);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-    color: var(--deny);
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    border-radius: var(--r-sm);
-    margin-bottom: 0.4rem;
   }
   .editor {
     flex: 1;

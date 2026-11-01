@@ -19,6 +19,8 @@
   import DiffViewer from '$lib/components/DiffViewer.svelte';
   import UnsavedMarker from '$lib/components/UnsavedMarker.svelte';
   import { modalFocus } from '$lib/modal';
+  import { toast } from '$lib/toast.svelte';
+  import { tick } from 'svelte';
 
   interface Option {
     v: unknown; // null = 키 제거(기본값으로)
@@ -39,7 +41,10 @@
     fields: Field[];
   }
 
-  let { onsaved }: { onsaved?: () => void } = $props();
+  let {
+    onsaved,
+    dirty = $bindable(false)
+  }: { onsaved?: () => void; dirty?: boolean } = $props();
 
   const DEFAULT: Option = { v: null, label: '(기본값 — 키 없음)' };
   const boolOpts: Option[] = [
@@ -179,14 +184,17 @@
   let onDisk = $state('');
   let loading = $state(true);
   let saving = $state(false);
-  let error = $state<string | null>(null);
-  let status = $state<string | null>(null);
+  let pending: Promise<void> = Promise.resolve();
+  let panelEl = $state<HTMLDivElement>();
   let diff = $state<DiffView | null>(null);
   let lint = $state<LintItem[]>([]);
   let newEnvName = $state('');
   let newEnvValue = $state('');
 
-  const dirty = $derived(text !== onDisk);
+  const changed = $derived(text !== onDisk);
+  $effect(() => {
+    dirty = changed;
+  });
 
   // The parsed tree drives every field display; unparseable text disables the form.
   const tree = $derived.by<Record<string, unknown> | null>(() => {
@@ -203,12 +211,11 @@
       return;
     }
     loading = true;
-    error = null;
     try {
       onDisk = await readRawSettings('', 'user');
       text = onDisk;
     } catch (e) {
-      error = String(e);
+      toast(String(e), 'error');
     } finally {
       loading = false;
     }
@@ -238,13 +245,15 @@
     return cur;
   }
 
-  async function commit(path: string, v: unknown) {
-    error = null;
-    try {
-      text = await configSetValue(text, 'json', path, v);
-    } catch (e) {
-      error = String(e);
-    }
+  function commit(path: string, v: unknown): Promise<void> {
+    pending = pending.then(async () => {
+      try {
+        text = await configSetValue(text, 'json', path, v);
+      } catch (e) {
+        toast(String(e), 'error');
+      }
+    });
+    return pending;
   }
 
   function selectedIndex(f: Field): number {
@@ -293,8 +302,13 @@
   }
 
   async function removeFolder(f: Field, dir: string) {
-    const next = folderList(f).filter((d) => d !== dir);
+    const prev = folderList(f);
+    const next = prev.filter((d) => d !== dir);
     await commit(f.path, next.length ? next : null);
+    toast(`폴더를 목록에서 제거했습니다: ${dir}`, 'info', {
+      label: '되돌리기',
+      run: () => commit(f.path, prev)
+    });
   }
 
   // --- env (string map) ------------------------------------------------------
@@ -318,7 +332,7 @@
   async function addEnv() {
     const name = newEnvName.trim();
     if (!ENV_NAME_RE.test(name)) {
-      error = `환경변수 이름이 올바르지 않습니다: ${name || '(비어 있음)'}`;
+      toast(`환경변수 이름이 올바르지 않습니다: ${name || '(비어 있음)'}`, 'error');
       return;
     }
     await commit(`env.${name}`, newEnvValue);
@@ -330,20 +344,30 @@
     await commit(`env.${name}`, (e.currentTarget as HTMLInputElement).value);
   }
 
-  async function removeEnv(name: string) {
+  async function removeEnv(name: string, value: string) {
     await commit(`env.${name}`, null);
+    toast(`환경변수를 삭제했습니다: ${name}`, 'info', {
+      label: '되돌리기',
+      run: () => commit(`env.${name}`, value)
+    });
   }
 
   // --- save ------------------------------------------------------------------
 
-  function openSaveDialog() {
-    error = null;
-    status = null;
+  // Flush a focused, not-yet-committed field (Ctrl+S from inside an input) first.
+  export async function openSaveDialog() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && panelEl?.contains(active)) {
+      active.blur();
+      await tick();
+    }
+    await pending;
     if (tree === null) {
-      error = '현재 텍스트가 유효한 JSON이 아닙니다.';
+      toast('현재 텍스트가 유효한 JSON이 아닙니다.', 'error');
       return;
     }
-    diff = { path: '~/.claude/settings.json', before: onDisk, after: text, changed: dirty };
+    if (!changed) return;
+    diff = { path: '~/.claude/settings.json', before: onDisk, after: text, changed };
   }
 
   async function confirmSave() {
@@ -358,11 +382,11 @@
         projectName: ''
       });
       onDisk = text;
-      status = `저장됨 → ${res.written}${res.backup ? ` (백업 생성됨)` : ''}`;
+      toast(`저장했습니다 → ${res.written}${res.backup ? ' (백업 생성됨)' : ''}`);
       diff = null;
       onsaved?.();
     } catch (e) {
-      error = String(e);
+      toast(String(e), 'error');
     } finally {
       saving = false;
     }
@@ -372,23 +396,18 @@
   const lintInfos = $derived(lint.filter((l) => l.level === 'info'));
 </script>
 
-<UnsavedMarker id="claude-general" when={dirty} />
+<UnsavedMarker id="claude-general" when={changed} />
 
-<div class="panel">
-  <div class="bar">
-    <p class="intro">
-      권한 규칙 외의 Claude Code 전역 설정입니다. "(기본값)"을 선택하면 키를 제거해 Claude Code
-      기본 동작을 따릅니다.
-    </p>
-    <button class="primary" class:dirty onclick={openSaveDialog} disabled={!dirty}>
-      {dirty ? '● 저장…' : '저장됨'}
-    </button>
-  </div>
+<div class="panel" bind:this={panelEl}>
+  <p class="intro">
+    권한 규칙 외의 Claude Code 전역 설정입니다. "(기본값)"을 선택하면 키를 제거해 Claude Code
+    기본 동작을 따릅니다. 저장은 상단 저장 버튼(Ctrl+S)으로 합니다.
+  </p>
 
   {#if lintWarns.length}
     <div class="lint" role="alert">
       {#each lintWarns as l (l.path + l.message)}
-        <span class="lint-item warn" title={l.message}><code>{l.path}</code> {l.message}</span>
+        <p class="callout callout-warn lint-item"><code>{l.path}</code> {l.message}</p>
       {/each}
     </div>
   {/if}
@@ -398,7 +417,7 @@
   {:else if loading}
     <p class="muted">불러오는 중…</p>
   {:else if tree === null}
-    <p class="warnbox">
+    <p class="callout callout-warn">
       현재 파일을 파싱할 수 없습니다 — Raw JSON 탭에서 구문 오류를 먼저 고쳐주세요.
     </p>
   {:else}
@@ -407,10 +426,15 @@
         <section>
           <h4>{s.title}</h4>
           {#each s.fields as f (f.path)}
+            {@const helpId = f.help ? `${f.path}-help` : undefined}
             <div class="row">
-              <label class="lbl" for={f.path} title={f.path}>{f.label}</label>
+              {#if f.type === 'folders'}
+                <span class="lbl" id="{f.path}-label" title={f.path}>{f.label}</span>
+              {:else}
+                <label class="lbl" for={f.path} title={f.path}>{f.label}</label>
+              {/if}
               {#if f.type === 'select'}
-                <select id={f.path} onchange={(e) => onSelect(f, e)}>
+                <select id={f.path} aria-describedby={helpId} onchange={(e) => onSelect(f, e)}>
                   {#each f.options ?? [] as o, i (i)}
                     <option value={i} selected={i === selectedIndex(f)}>{o.label}</option>
                   {/each}
@@ -422,12 +446,18 @@
                   type="number"
                   value={typeof nv === 'number' ? nv : ''}
                   placeholder={f.placeholder}
+                  aria-describedby={helpId}
                   onchange={(e) => onNumber(f, e)}
                 />
               {:else if f.type === 'folders'}
-                <div class="folders">
+                <div
+                  class="folders"
+                  role="group"
+                  aria-labelledby="{f.path}-label"
+                  aria-describedby={helpId}
+                >
                   {#each folderList(f) as dir (dir)}
-                    <span class="chip">
+                    <span class="folder-chip">
                       <span class="dir">{dir}</span>
                       <button
                         class="x"
@@ -437,7 +467,7 @@
                       >
                     </span>
                   {/each}
-                  <button class="add" onclick={() => addFolder(f)}>+ 폴더 선택…</button>
+                  <button class="btn btn-sm" onclick={() => addFolder(f)}>+ 폴더 선택…</button>
                 </div>
               {:else}
                 {@const tv = getAt(f.path)}
@@ -447,13 +477,14 @@
                   value={typeof tv === 'string' ? tv : ''}
                   placeholder={f.placeholder}
                   spellcheck="false"
+                  aria-describedby={helpId}
                   onchange={(e) => onText(f, e)}
                 />
               {/if}
             </div>
-            {#if f.help}<p class="help">{f.help}</p>{/if}
+            {#if f.help}<p class="help" id={helpId}>{f.help}</p>{/if}
             {#if f.caution && f.caution.when(getAt(f.path))}
-              <p class="caution">{f.caution.text}</p>
+              <p class="callout callout-warn caution" role="note">{f.caution.text}</p>
             {/if}
           {/each}
         </section>
@@ -461,7 +492,7 @@
 
       <section>
         <h4>환경변수 (env)</h4>
-        <p class="help">
+        <p class="help" id="env-help">
           Claude Code 세션에만 적용되는 환경변수입니다. API 키 같은 비밀값은 여기 넣지 말고
           OS 환경변수나 apiKeyHelper를 사용하세요.
         </p>
@@ -473,14 +504,18 @@
               class="env-value"
               {value}
               spellcheck="false"
+              aria-label={`${name} 값`}
               onchange={(e) => setEnv(name, e)}
             />
-            <button class="x" title="변수 삭제" aria-label={`${name} 삭제`} onclick={() => removeEnv(name)}
-              >×</button
+            <button
+              class="x"
+              title="변수 삭제"
+              aria-label={`${name} 삭제`}
+              onclick={() => removeEnv(name, value)}>×</button
             >
           </div>
           {#if envWarning(name)}
-            <p class="caution">{envWarning(name)}</p>
+            <p class="callout callout-warn caution">{envWarning(name)}</p>
           {/if}
         {/each}
         <div class="env-row new">
@@ -489,6 +524,8 @@
             class="env-name-in"
             placeholder="이름 (예: ANTHROPIC_MODEL)"
             spellcheck="false"
+            aria-label="새 환경변수 이름"
+            aria-describedby="env-help"
             bind:value={newEnvName}
           />
           <input
@@ -496,9 +533,11 @@
             class="env-value"
             placeholder="값"
             spellcheck="false"
+            aria-label="새 환경변수 값"
             bind:value={newEnvValue}
+            onkeydown={(e) => e.key === 'Enter' && newEnvName.trim() && addEnv()}
           />
-          <button class="add" onclick={addEnv} disabled={!newEnvName.trim()}>추가</button>
+          <button class="btn btn-sm" onclick={addEnv} disabled={!newEnvName.trim()}>추가</button>
         </div>
       </section>
 
@@ -517,9 +556,6 @@
       </p>
     </div>
   {/if}
-
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
-  {#if status}<p class="ok" role="status">{status}</p>{/if}
 </div>
 
 {#if diff}
@@ -553,37 +589,11 @@
     padding: 0.6rem 0.8rem;
     box-sizing: border-box;
   }
-  .bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.8rem;
-    margin-bottom: 0.5rem;
-  }
   .intro {
     color: var(--text-3);
-    font-size: 0.74rem;
-    margin: 0;
+    font-size: var(--fs-sm);
+    margin: 0 0 0.5rem;
     line-height: 1.5;
-  }
-  .bar .primary {
-    padding: 0.32rem 0.9rem;
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    color: var(--text-3);
-    border-radius: var(--r-sm);
-    cursor: default;
-    font-size: 0.8rem;
-    font-weight: 600;
-    white-space: nowrap;
-    transition: background-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
-  }
-  .bar .primary.dirty {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-    color: white;
-    cursor: pointer;
-    box-shadow: 0 2px 12px rgba(37, 99, 235, 0.3);
   }
   .lint {
     display: flex;
@@ -592,14 +602,8 @@
     margin-bottom: 0.5rem;
   }
   .lint-item {
-    font-size: 0.72rem;
-    border-radius: var(--r-sm);
-    padding: 0.22rem 0.55rem;
-  }
-  .lint-item.warn {
-    color: var(--ask);
-    background: var(--ask-soft);
-    border: 1px solid rgba(251, 191, 36, 0.35);
+    font-size: var(--fs-sm);
+    padding: 0.25rem 0.55rem;
   }
   .lint-item code {
     font-weight: 600;
@@ -610,6 +614,7 @@
     overflow: auto;
     min-height: 0;
     padding-right: 0.3rem;
+    container-type: inline-size;
   }
   section {
     margin-bottom: 1rem;
@@ -617,15 +622,14 @@
   h4 {
     color: var(--text-2);
     font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.04em;
     margin: 0 0 0.4rem;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.25rem;
   }
   .row {
     display: grid;
-    grid-template-columns: 12rem 1fr;
+    grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr);
     align-items: center;
     gap: 0.5rem;
     padding: 0.18rem 0;
@@ -655,18 +659,15 @@
   input:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .help {
     color: var(--text-3);
-    font-size: 0.68rem;
+    font-size: var(--fs-xs);
     margin: 0 0 0.25rem;
     padding-left: 0.1rem;
   }
   .caution {
-    color: var(--ask);
-    background: var(--ask-soft);
-    border: 1px solid rgba(251, 191, 36, 0.35);
-    border-radius: var(--r-sm);
     font-size: 0.7rem;
     padding: 0.25rem 0.5rem;
     margin: 0.15rem 0 0.35rem;
@@ -676,11 +677,14 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.3rem;
+    min-width: 0;
   }
-  .chip {
+  .folder-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
+    min-width: 0;
+    max-width: 100%;
     background: var(--bg-1);
     border: 1px solid var(--border);
     border-radius: 999px;
@@ -693,6 +697,7 @@
     word-break: break-all;
   }
   .x {
+    flex-shrink: 0;
     background: none;
     border: none;
     color: var(--text-3);
@@ -706,41 +711,33 @@
     color: var(--deny);
     background: var(--deny-soft);
   }
-  .add {
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.22rem 0.6rem;
-    cursor: pointer;
-    font-size: 0.72rem;
-    white-space: nowrap;
-  }
-  .add:hover:not(:disabled) {
-    background: var(--bg-3);
-    color: var(--text-1);
-  }
-  .add:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .env-row {
     display: grid;
-    grid-template-columns: 14rem 1fr auto;
+    grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.4rem;
     padding: 0.15rem 0;
   }
   .env-name {
-    font-size: 0.74rem;
+    font-size: var(--fs-sm);
     color: var(--text-1);
     word-break: break-all;
   }
-  .env-name-in {
-    font-size: 0.74rem;
-  }
+  .env-name-in,
   .env-value {
-    font-size: 0.74rem;
+    font-size: var(--fs-sm);
+  }
+  @container (max-width: 30rem) {
+    .row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.25rem;
+    }
+    .env-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .env-row > :first-child {
+      grid-column: 1 / -1;
+    }
   }
   .note {
     color: var(--text-3);
@@ -750,28 +747,6 @@
   }
   .note code {
     color: var(--text-2);
-  }
-  .muted {
-    color: var(--text-3);
-    font-size: 0.8rem;
-  }
-  .warnbox {
-    color: var(--ask);
-    background: var(--ask-soft);
-    border-radius: var(--r-sm);
-    padding: 0.4rem 0.6rem;
-    font-size: 0.76rem;
-  }
-  .err {
-    color: var(--deny);
-    font-size: 0.76rem;
-    margin: 0.4rem 0 0;
-  }
-  .ok {
-    color: var(--allow);
-    font-size: 0.76rem;
-    word-break: break-all;
-    margin: 0.4rem 0 0;
   }
   /* Modal chrome comes from the shared app.css (.modal-bg / .modal / .modal-actions). */
   .fp {

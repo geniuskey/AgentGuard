@@ -2,8 +2,8 @@
   // All-drives explorer for global (user) settings: pick any folder/file on the
   // PC and mark it Allow (work) / Ask / Deny (sensitive), like the project tree
   // but rooted at the machine. Selection acts on the entry's Claude pattern.
-  import { onMount } from 'svelte';
-  import type { Policy, ScopeName, SystemEntry } from '$lib/ipc';
+  import { onMount, tick } from 'svelte';
+  import type { Policy, ScopeName, SystemEntry, Tool } from '$lib/ipc';
   import { inTauri, listDrives } from '$lib/ipc';
   import { app, refreshEffective, removeRule, upsertRule } from '$lib/state.svelte';
   import { describePattern } from '$lib/describe';
@@ -12,10 +12,13 @@
 
   let { scope }: { scope: ScopeName } = $props();
 
+  let pathTool = $state<Tool>('Read');
   let drives = $state<SystemEntry[] | null>(null);
   let selected = $state<SystemEntry | null>(null);
   let error = $state<string | null>(null);
   let menu = $state<{ entry: SystemEntry; x: number; y: number } | null>(null);
+  let menuEl = $state<HTMLDivElement | null>(null);
+  let menuReturnFocus: HTMLElement | null = null;
 
   onMount(async () => {
     try {
@@ -54,20 +57,62 @@
     await refreshEffective();
   }
 
-  // Right-click on a tree row: open the policy context menu, clamped to viewport.
-  function openMenu(entry: SystemEntry, x: number, y: number) {
-    const mw = 210;
-    const mh = 190;
-    menu = {
-      entry,
-      x: Math.max(8, Math.min(x, window.innerWidth - mw - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - mh - 8))
-    };
+  async function openMenu(entry: SystemEntry, x: number, y: number) {
+    menuReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    menu = { entry, x, y };
+    await tick();
+    if (!menuEl || !menu) return;
+    const r = menuEl.getBoundingClientRect();
+    menu.x = Math.max(8, Math.min(x, window.innerWidth - r.width - 8));
+    menu.y = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+    menuItems()[0]?.focus();
+  }
+
+  function menuItems(): HTMLButtonElement[] {
+    return menuEl ? [...menuEl.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')] : [];
+  }
+
+  function closeMenu(restoreFocus = false) {
+    menu = null;
+    if (restoreFocus) menuReturnFocus?.focus();
+    menuReturnFocus = null;
+  }
+
+  function onMenuKeydown(e: KeyboardEvent) {
+    const items = menuItems();
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number | null = null;
+    if (e.key === 'ArrowDown') next = (i + 1) % items.length;
+    else if (e.key === 'ArrowUp') next = (i - 1 + items.length) % items.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = items.length - 1;
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu(true);
+      return;
+    } else if (e.key === 'Tab') {
+      closeMenu();
+      return;
+    }
+    if (next !== null && items.length) {
+      e.preventDefault();
+      items[next].focus();
+    }
   }
 </script>
 
 <div class="panel">
-  <div class="head">내 PC</div>
+  <div class="head">
+    <span>내 PC</span>
+    <label class="tool-pick">
+      규칙 색상
+      <select class="input" bind:value={pathTool}>
+        <option value="Read">Read</option>
+        <option value="Edit">Edit</option>
+      </select>
+    </label>
+  </div>
 
   <div class="selbar">
     {#if selected}
@@ -79,6 +124,7 @@
         <button
           class="allow"
           class:active={selRule?.policy === 'allow'}
+          aria-pressed={selRule?.policy === 'allow'}
           onclick={() => selected && applyTo(selected, 'allow')}
         >
           작업 Allow
@@ -86,6 +132,7 @@
         <button
           class="ask"
           class:active={selRule?.policy === 'ask'}
+          aria-pressed={selRule?.policy === 'ask'}
           onclick={() => selected && applyTo(selected, 'ask')}
         >
           Ask
@@ -93,6 +140,7 @@
         <button
           class="deny"
           class:active={selRule?.policy === 'deny'}
+          aria-pressed={selRule?.policy === 'deny'}
           onclick={() => selected && applyTo(selected, 'deny')}
         >
           민감 Deny
@@ -106,11 +154,11 @@
     {/if}
   </div>
 
-  <div class="tree">
+  <div class="tree" role="tree" aria-label="내 PC 폴더 트리">
     {#if drives === null}
       <p class="muted">드라이브를 찾는 중…</p>
     {:else if error}
-      <p class="err" role="alert">{error}</p>
+      <p class="callout callout-error" role="alert">{error}</p>
     {:else if drives.length === 0}
       <p class="muted">
         {inTauri() ? '드라이브가 없습니다.' : '데스크톱 앱에서 실행하면 드라이브가 표시됩니다.'}
@@ -120,6 +168,7 @@
         <SystemNode
           entry={d}
           {scope}
+          {pathTool}
           selectedPath={selected?.path ?? ''}
           onselect={(e) => (selected = e)}
           oncontext={openMenu}
@@ -129,27 +178,36 @@
   </div>
 
   <div class="legend" aria-label="색상 범례">
-    <span><i class="lg lg-allow"></i>접근 가능</span>
-    <span><i class="lg lg-ask"></i>확인 후</span>
-    <span><i class="lg lg-deny"></i>차단</span>
+    <span><i class="lg lg-allow"></i>Allow 규칙</span>
+    <span><i class="lg lg-ask"></i>Ask 규칙</span>
+    <span><i class="lg lg-deny"></i>Deny 규칙</span>
     <span
-      use:tooltip={'규칙이 없는 항목은 도구 기본 동작을 따릅니다 — 보통 접근할 때 확인창이 뜹니다.\n민감한 경로는 폴더 단위로 Deny를 지정해 차단하세요.'}
+      use:tooltip={'명시 규칙 비교입니다. 실제 승인 결과는 실행 환경에 따라 달라집니다. 회색은 규칙 없음 또는 판정 불가입니다.'}
     >
-      <i class="lg lg-none"></i>기본 (필요 시 확인)
+      <i class="lg lg-none"></i>없음 / 판정 불가
     </span>
   </div>
 </div>
 
 <svelte:window
-  onclick={() => (menu = null)}
-  oncontextmenu={() => (menu = null)}
-  onkeydown={(e) => e.key === 'Escape' && (menu = null)}
+  onclick={() => menu && closeMenu()}
+  oncontextmenu={() => menu && closeMenu()}
+  onkeydown={(e) => e.key === 'Escape' && menu && closeMenu(true)}
+  onresize={() => menu && closeMenu()}
 />
 
 {#if menu}
   {@const m = menu}
   {@const mRule = ruleFor(m.entry)}
-  <div class="ctx" style="left: {m.x}px; top: {m.y}px" role="menu" aria-label="정책 지정">
+  <div
+    class="ctx"
+    bind:this={menuEl}
+    style="left: {m.x}px; top: {m.y}px"
+    role="menu"
+    tabindex="-1"
+    aria-label="{m.entry.name} 정책 지정"
+    onkeydown={onMenuKeydown}
+  >
     <div class="ctx-head">
       <span class="ctx-name">{m.entry.name}</span>
       <code class="ctx-pat">{rulePattern(m.entry)}</code>
@@ -166,7 +224,7 @@
     </button>
     <button role="menuitem" class="ctx-item" onclick={() => applyTo(m.entry, 'deny')}>
       <span class="cdot c-deny" aria-hidden="true"></span>
-      <span class="ctx-label">Deny<span class="ctx-sub">민감 폴더 — 접근 차단</span></span>
+      <span class="ctx-label">Deny<span class="ctx-sub">민감 폴더 — 접근 Deny 규칙</span></span>
       {#if mRule?.policy === 'deny'}<span class="ctx-check">✓</span>{/if}
     </button>
     <div class="ctx-sep" role="separator"></div>
@@ -186,11 +244,29 @@
   .head {
     padding: 0.55rem 0.7rem;
     border-bottom: 1px solid var(--border);
-    font-size: 0.8rem;
+    font-size: var(--fs-md);
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text-2);
     flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3rem 0.6rem;
+  }
+  .tool-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 500;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+  .tool-pick select {
+    width: auto;
+    padding: 0.15rem 0.4rem;
+    font-size: var(--fs-sm);
   }
   .selbar {
     padding: 0.5rem 0.6rem;
@@ -225,13 +301,14 @@
     cursor: pointer;
     font-size: 0.72rem;
     font-weight: 600;
+    white-space: nowrap;
     background: var(--bg-2);
     border: 1px solid var(--border-strong);
     color: var(--text-2);
     transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
   }
   .selbtns .allow {
-    border-color: rgba(52, 211, 153, 0.35);
+    border-color: var(--allow-line);
     color: var(--allow);
   }
   .selbtns .allow:hover,
@@ -239,7 +316,7 @@
     background: var(--allow-soft);
   }
   .selbtns .ask {
-    border-color: rgba(251, 191, 36, 0.35);
+    border-color: var(--ask-line);
     color: var(--ask);
   }
   .selbtns .ask:hover,
@@ -247,7 +324,7 @@
     background: var(--ask-soft);
   }
   .selbtns .deny {
-    border-color: rgba(248, 113, 113, 0.35);
+    border-color: var(--deny-line);
     color: var(--deny);
   }
   .selbtns .deny:hover,
@@ -276,10 +353,6 @@
     color: var(--text-3);
     font-size: 0.78rem;
     padding: 0 0.3rem;
-  }
-  .err {
-    color: var(--deny);
-    font-size: 0.78rem;
   }
   .legend {
     display: flex;
@@ -365,7 +438,12 @@
     font-size: 0.8rem;
     transition: background-color var(--t-fast);
   }
-  .ctx-item:hover:not(:disabled) {
+  .ctx-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .ctx-item:hover:not(:disabled),
+  .ctx-item:focus:not(:disabled) {
     background: var(--bg-3);
   }
   .ctx-item:disabled {

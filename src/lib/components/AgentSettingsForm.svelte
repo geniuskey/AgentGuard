@@ -234,7 +234,7 @@
   {#if !inTauri()}
     <p class="muted">데스크톱 앱에서만 설정을 편집할 수 있습니다.</p>
   {:else if parseError}
-    <p class="warn">현재 텍스트를 파싱할 수 없습니다 — Raw 탭에서 구문 오류를 먼저 고쳐주세요.</p>
+    <p class="callout callout-warn">현재 텍스트를 파싱할 수 없습니다 — Raw 탭에서 구문 오류를 먼저 고쳐주세요.</p>
   {:else if !tree}
     <p class="muted">읽는 중…</p>
   {:else}
@@ -243,17 +243,20 @@
         <h4>{s.title}</h4>
         {#each s.fields as f (f.path)}
           {@const fv = fieldValue(f)}
+          {@const helpId = f.help ? `${f.path}-help` : undefined}
           <div class="row">
-            <label class="lbl" for={f.path} title={f.help}>{f.label}</label>
+            <label class="lbl" for={f.path}>{f.label}</label>
             {#if f.type === 'select'}
-              <select id={f.path} onchange={(e) => onSelect(f, e)}>
+              <select class="input" id={f.path} aria-describedby={helpId} onchange={(e) => onSelect(f, e)}>
                 {#each f.options ?? [] as o, i (i)}
                   <option value={i} selected={i === selectedIndex(f)}>{o.label}</option>
                 {/each}
               </select>
             {:else}
               <input
+                class="input"
                 id={f.path}
+                aria-describedby={helpId}
                 type="text"
                 value={typeof fv.value === 'string' ? fv.value : ''}
                 placeholder={f.placeholder}
@@ -264,8 +267,8 @@
             {#if fv.patterns > 0}
               <span class="pat" title="패턴별 세부 규칙은 Raw 탭에서 편집하세요">+패턴 {fv.patterns}</span>
             {/if}
+            {#if f.help}<p class="help" id={helpId}>{f.help}</p>{/if}
           </div>
-          {#if f.help}<p class="help">{f.help}</p>{/if}
         {/each}
       </section>
     {/each}
@@ -275,7 +278,7 @@
     </p>
   {/if}
 
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
+  {#if error}<p class="callout callout-error" role="alert">{error}</p>{/if}
 </div>
 
 <style>
@@ -298,72 +301,51 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 11rem 1fr auto;
+    grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.5rem;
+    column-gap: 0.5rem;
     padding: 0.18rem 0;
   }
   .lbl {
-    font-size: 0.78rem;
+    font-size: var(--fs-md);
     color: var(--text-1);
   }
-  select,
-  input {
-    background: var(--bg-1);
-    color: var(--text-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
+  .input {
     padding: 0.32rem 0.5rem;
-    font-size: 0.76rem;
+    font-size: var(--fs-sm);
     min-width: 0;
   }
-  input {
+  input.input {
     font-family: var(--font-mono);
   }
-  input::placeholder {
+  input.input::placeholder {
     color: var(--text-3);
     font-family: var(--font-sans);
-  }
-  select:focus,
-  input:focus {
-    outline: none;
-    border-color: var(--accent);
   }
   .pat {
     font-size: 0.64rem;
     color: var(--ask);
     background: var(--ask-soft);
-    border: 1px solid rgba(251, 191, 36, 0.35);
+    border: 1px solid var(--ask-line);
     border-radius: 999px;
     padding: 0.05rem 0.45rem;
     white-space: nowrap;
   }
   .help {
-    grid-column: 1 / -1;
+    grid-column: 2 / -1;
     color: var(--text-3);
-    font-size: 0.68rem;
-    margin: 0 0 0.25rem;
+    font-size: var(--fs-xs);
+    margin: 0.15rem 0 0.1rem;
     padding-left: 0.1rem;
   }
   .note {
     color: var(--text-3);
-    font-size: 0.7rem;
+    font-size: var(--fs-xs);
     margin-top: 0.6rem;
     line-height: 1.5;
   }
-  .muted {
-    color: var(--text-3);
-    font-size: 0.8rem;
-  }
-  .warn {
-    color: var(--ask);
-    background: var(--ask-soft);
-    border-radius: var(--r-sm);
-    padding: 0.4rem 0.6rem;
-    font-size: 0.76rem;
-  }
-  .err {
-    color: var(--deny);
-    font-size: 0.76rem;
+  .callout-error {
+    margin-top: 0.4rem;
+    word-break: break-all;
   }
 </style>

@@ -1,15 +1,9 @@
-//! Effective-policy merge across scopes (D4) — see `docs/effective-policy.md`.
-//!
-//! Evaluation is `deny > ask > allow` (first match), and `deny` wins across all
-//! scopes. Paths with no matching rule fall back to Claude Code's normal
-//! behavior (prompt / `ask`). AgentGuard manages only explicit path rules —
-//! there is no deny-by-default mode.
-
-use crate::model::{AppliesTo, Policy, PolicyRule, Scope};
-use globset::{Glob, GlobSetBuilder};
+//! Comparison of explicit path rules, not a prediction of runtime approval.
+//! Runtime modes, trust, hooks, CLI flags and symlink resolution are not modeled.
+use crate::model::{AppliesTo, Policy, PolicyRule, Scope, Tool, FILE_ACCESS_TOOLS};
+use globset::GlobBuilder;
 use serde::{Deserialize, Serialize};
 
-/// Neutral rules grouped by scope.
 #[derive(Debug, Default, Clone)]
 pub struct ScopedRules {
     pub managed: Vec<PolicyRule>,
@@ -20,164 +14,227 @@ pub struct ScopedRules {
 
 impl ScopedRules {
     fn tagged(&self) -> Vec<(Scope, &PolicyRule)> {
-        let mut v = Vec::new();
-        v.extend(self.managed.iter().map(|r| (Scope::Managed, r)));
-        v.extend(self.user.iter().map(|r| (Scope::User, r)));
-        v.extend(self.project.iter().map(|r| (Scope::Project, r)));
-        v.extend(self.local.iter().map(|r| (Scope::Local, r)));
-        v
+        let mut result = Vec::new();
+        result.extend(self.managed.iter().map(|r| (Scope::Managed, r)));
+        result.extend(self.local.iter().map(|r| (Scope::Local, r)));
+        result.extend(self.project.iter().map(|r| (Scope::Project, r)));
+        result.extend(self.user.iter().map(|r| (Scope::User, r)));
+        result
     }
 }
 
-/// Final decision for a path, with provenance for the Preview / Conflicts tabs.
+#[derive(Debug, Default, Clone)]
+pub struct MatchContext {
+    pub project_root: String,
+    pub home: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EffectivePolicy {
     pub path: String,
-    pub effective: Policy,
+    pub tool: Tool,
+    pub effective: Option<Policy>,
     pub source_scope: Option<Scope>,
-    /// A rule on this exact path decided it (vs. inherited from an ancestor rule).
     pub explicit: bool,
-    /// Both allow and a (more specific or cross-scope) deny/ask matched.
     pub conflict: bool,
+    pub incomplete: bool,
 }
 
-/// Normalize a path for matching: strip leading `./`, use forward slashes.
 fn norm(path: &str) -> String {
-    path.trim_start_matches("./").replace('\\', "/")
+    path.strip_prefix("./").unwrap_or(path).replace('\\', "/")
 }
 
-/// The glob patterns a rule matches against a (normalized) target path.
-fn rule_patterns(rule: &PolicyRule) -> Vec<String> {
-    let p = norm(&rule.path);
-    match rule.applies_to {
-        AppliesTo::File => vec![p],
-        AppliesTo::Folder => vec![p.clone(), format!("{p}/*")],
-        AppliesTo::FolderAndChildren => vec![p.clone(), format!("{p}/**")],
-        AppliesTo::Pattern => vec![p],
+fn absolute(path: &str) -> String {
+    let p = path.replace('\\', "/");
+    let bytes = p.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        format!(
+            "/{}/{}",
+            (bytes[0] as char).to_ascii_lowercase(),
+            p[2..].trim_start_matches('/')
+        )
+    } else {
+        p
     }
 }
 
-fn rule_matches(rule: &PolicyRule, target: &str) -> bool {
-    let mut b = GlobSetBuilder::new();
-    for pat in rule_patterns(rule) {
-        if let Ok(g) = Glob::new(&pat) {
-            b.add(g);
-        }
-    }
-    match b.build() {
-        Ok(set) => set.is_match(target),
-        Err(_) => false,
+fn join(base: &str, path: &str) -> String {
+    if base.is_empty() {
+        path.to_string()
+    } else {
+        format!("{}/{}", absolute(base).trim_end_matches('/'), path)
     }
 }
 
-/// Fallback decision when no rule matches: Claude Code prompts at runtime.
-pub(crate) fn fallback() -> Policy {
-    Policy::Ask
-}
-
-/// Every rule (with its scope) matching `target_path`, in Managed > Local > Project > User
-/// order. Used by the simulator to show *why* a path got its decision.
-pub fn matching_rules(rules: &ScopedRules, target_path: &str) -> Vec<(Scope, PolicyRule)> {
-    let target = norm(target_path);
-    let mut matched: Vec<(Scope, PolicyRule)> = rules
-        .tagged()
-        .into_iter()
-        .filter(|(_, r)| rule_matches(r, &target))
-        .map(|(s, r)| (s, r.clone()))
-        .collect();
-    fn scope_rank(s: Scope) -> u8 {
-        match s {
-            Scope::Managed => 0,
-            Scope::Local => 1,
-            Scope::Project => 2,
-            Scope::User => 3,
-        }
+fn target_path(path: &str, context: &MatchContext) -> Option<String> {
+    // Lexical glob comparison cannot safely resolve traversal or filesystem links.
+    if path.replace('\\', "/").split('/').any(|part| part == "..") {
+        return None;
     }
-    matched.sort_by_key(|(s, _)| scope_rank(*s));
-    matched
+    if let Some(rest) = path.strip_prefix("~/") {
+        return (!context.home.is_empty()).then(|| join(&context.home, rest));
+    }
+    if let Some(rest) = path.strip_prefix("//") {
+        return Some(format!("/{rest}"));
+    }
+    if path.starts_with('/') || path.as_bytes().get(1) == Some(&b':') {
+        return Some(absolute(path));
+    }
+    Some(join(&context.project_root, &norm(path)))
 }
 
-/// Compute the effective policy for a single `target_path`.
-pub fn compute_for(rules: &ScopedRules, target_path: &str) -> EffectivePolicy {
-    let target = norm(target_path);
-    let tagged = rules.tagged();
+fn supports_tool(rule: &PolicyRule, tool: Tool) -> bool {
+    rule.tools.as_ref().is_none_or(|tools| {
+        tools.contains(&tool)
+            || (tool == Tool::Edit && rule.policy == Policy::Deny && tools.contains(&Tool::Read))
+    })
+}
 
-    let mut matched: Vec<(Scope, &PolicyRule)> = tagged
-        .into_iter()
-        .filter(|(_, r)| rule_matches(r, &target))
-        .collect();
-
-    if matched.is_empty() {
-        return EffectivePolicy {
-            path: target,
-            effective: fallback(),
-            source_scope: None,
-            explicit: false,
-            conflict: false,
+fn pattern_for(rule: &PolicyRule, scope: Scope, context: &MatchContext) -> Option<String> {
+    let path = norm(&rule.path);
+    // Preserve uncertainty rather than inventing gitignore negation/class semantics.
+    if path.contains(['!', '[', ']', '{', '}', '?']) {
+        return None;
+    }
+    let suffix = match rule.applies_to {
+        AppliesTo::File | AppliesTo::Pattern => path.clone(),
+        AppliesTo::Folder => format!("{path}/*"),
+        AppliesTo::FolderAndChildren => format!("{path}/**"),
+    };
+    if let Some(rest) = suffix.strip_prefix("~/") {
+        return (!context.home.is_empty()).then(|| join(&context.home, rest));
+    }
+    if let Some(rest) = suffix.strip_prefix("//") {
+        return Some(format!("/{rest}"));
+    }
+    if let Some(rest) = suffix.strip_prefix('/') {
+        return match scope {
+            Scope::User if !context.home.is_empty() => {
+                Some(join(&join(&context.home, ".claude"), rest))
+            }
+            Scope::Project | Scope::Local if !context.project_root.is_empty() => {
+                Some(join(&context.project_root, rest))
+            }
+            _ => None,
         };
     }
+    let single_file = !suffix.contains('/');
+    let single_dir = path.split('/').count() == 1
+        && matches!(
+            rule.applies_to,
+            AppliesTo::Folder | AppliesTo::FolderAndChildren
+        );
+    // gitignore bare filenames match at any depth. Single directory deny/ask
+    // patterns also reach nested copies; allow patterns do not.
+    let recursive = single_file || (single_dir && rule.policy != Policy::Allow);
+    Some(join(
+        &context.project_root,
+        &if recursive {
+            format!("**/{suffix}")
+        } else {
+            suffix
+        },
+    ))
+}
 
-    // Managed > Local > Project > User for source attribution within the same policy.
-    fn scope_rank(s: Scope) -> u8 {
-        match s {
-            Scope::Managed => 0,
-            Scope::Local => 1,
-            Scope::Project => 2,
-            Scope::User => 3,
-        }
-    }
-    matched.sort_by_key(|(s, _)| scope_rank(*s));
+fn rule_matches(
+    rule: &PolicyRule,
+    scope: Scope,
+    target: &str,
+    context: &MatchContext,
+) -> Option<bool> {
+    let pattern = pattern_for(rule, scope, context)?;
+    let resolved = target_path(target, context)?;
+    let windows = context.project_root.as_bytes().get(1) == Some(&b':')
+        || context.home.as_bytes().get(1) == Some(&b':');
+    let matcher = GlobBuilder::new(&pattern)
+        .literal_separator(true)
+        .case_insensitive(windows)
+        .build()
+        .ok()?
+        .compile_matcher();
+    let same_folder = matches!(
+        rule.applies_to,
+        AppliesTo::Folder | AppliesTo::FolderAndChildren
+    ) && norm(&rule.path) == norm(target);
+    Some(same_folder || matcher.is_match(resolved))
+}
 
-    let has = |p: Policy| matched.iter().any(|(_, r)| r.policy == p);
-    let has_allow = has(Policy::Allow);
-    let has_ask = has(Policy::Ask);
-    let has_deny = has(Policy::Deny);
+pub fn matching_rules_for(
+    rules: &ScopedRules,
+    target: &str,
+    tool: Tool,
+    context: &MatchContext,
+) -> Vec<(Scope, PolicyRule)> {
+    rules
+        .tagged()
+        .into_iter()
+        .filter(|(scope, rule)| {
+            supports_tool(rule, tool) && rule_matches(rule, *scope, target, context) == Some(true)
+        })
+        .map(|(scope, rule)| (scope, rule.clone()))
+        .collect()
+}
 
-    // deny > ask > allow
-    let effective = if has_deny {
-        Policy::Deny
-    } else if has_ask {
-        Policy::Ask
+pub fn compute_for_tool(
+    rules: &ScopedRules,
+    target: &str,
+    tool: Tool,
+    context: &MatchContext,
+) -> EffectivePolicy {
+    let matched = matching_rules_for(rules, target, tool, context);
+    let incomplete = rules.tagged().iter().any(|(scope, rule)| {
+        supports_tool(rule, tool) && rule_matches(rule, *scope, target, context).is_none()
+    });
+    let has = |policy| matched.iter().any(|(_, rule)| rule.policy == policy);
+    let effective = if incomplete {
+        None
+    } else if has(Policy::Deny) {
+        Some(Policy::Deny)
+    } else if has(Policy::Ask) {
+        Some(Policy::Ask)
+    } else if has(Policy::Allow) {
+        Some(Policy::Allow)
     } else {
-        Policy::Allow
+        None
     };
-
-    // Source = highest-precedence-scope rule carrying the winning policy.
-    let source_scope = matched
-        .iter()
-        .find(|(_, r)| r.policy == effective)
-        .map(|(s, _)| *s);
-
-    // Explicit if a rule for the *exact* path decided it.
-    let explicit = matched
-        .iter()
-        .any(|(_, r)| r.policy == effective && norm(&r.path) == target);
-
-    // Conflict: allow coexists with a deny or ask that overrides it.
-    let conflict = has_allow && (has_deny || has_ask);
-
     EffectivePolicy {
-        path: target,
+        path: norm(target),
+        tool,
         effective,
-        source_scope,
-        explicit,
-        conflict,
+        incomplete,
+        source_scope: matched
+            .iter()
+            .find(|(_, rule)| Some(rule.policy) == effective)
+            .map(|(scope, _)| *scope),
+        explicit: matched
+            .iter()
+            .any(|(_, rule)| Some(rule.policy) == effective && norm(&rule.path) == norm(target)),
+        conflict: has(Policy::Allow) && (has(Policy::Ask) || has(Policy::Deny)),
     }
 }
 
-/// Compute effective policy for every distinct rule path across scopes.
-/// This is the "rules view" used by the Effective Preview tabs.
-pub fn compute_all(rules: &ScopedRules) -> Vec<EffectivePolicy> {
+pub fn compute_for(rules: &ScopedRules, target: &str) -> EffectivePolicy {
+    compute_for_tool(rules, target, Tool::Read, &MatchContext::default())
+}
+
+pub fn compute_all_in(rules: &ScopedRules, context: &MatchContext) -> Vec<EffectivePolicy> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
-    for (_, r) in rules.tagged() {
-        let key = norm(&r.path);
+    for (_, rule) in rules.tagged() {
+        let key = norm(&rule.path);
         if seen.insert(key.clone()) {
-            out.push(compute_for(rules, &key));
+            for tool in FILE_ACCESS_TOOLS {
+                out.push(compute_for_tool(rules, &key, tool, context));
+            }
         }
     }
     out
+}
+
+pub fn compute_all(rules: &ScopedRules) -> Vec<EffectivePolicy> {
+    compute_all_in(rules, &MatchContext::default())
 }
 
 #[cfg(test)]
@@ -196,22 +253,22 @@ mod tests {
             ..Default::default()
         };
         let folder = compute_for(&rules, "src");
-        assert_eq!(folder.effective, Policy::Allow);
+        assert_eq!(folder.effective, Some(Policy::Allow));
         assert!(folder.explicit);
 
         let child = compute_for(&rules, "src/app.ts");
-        assert_eq!(child.effective, Policy::Allow);
+        assert_eq!(child.effective, Some(Policy::Allow));
         assert!(!child.explicit); // inherited
     }
 
     #[test]
-    fn unmatched_paths_ask() {
+    fn unmatched_paths_have_no_explicit_decision() {
         let rules = ScopedRules {
             project: vec![rule("src", Policy::Allow, AppliesTo::FolderAndChildren)],
             ..Default::default()
         };
         let other = compute_for(&rules, "vendor/lib.js");
-        assert_eq!(other.effective, Policy::Ask);
+        assert_eq!(other.effective, None);
         assert_eq!(other.source_scope, None);
     }
 
@@ -224,7 +281,7 @@ mod tests {
             ..Default::default()
         };
         let r = compute_for(&rules, ".env");
-        assert_eq!(r.effective, Policy::Deny);
+        assert_eq!(r.effective, Some(Policy::Deny));
         assert_eq!(r.source_scope, Some(Scope::User));
         assert!(r.conflict);
     }
@@ -241,9 +298,12 @@ mod tests {
             )],
             ..Default::default()
         };
-        assert_eq!(compute_for(&rules, "src/app.ts").effective, Policy::Allow);
+        assert_eq!(
+            compute_for(&rules, "src/app.ts").effective,
+            Some(Policy::Allow)
+        );
         let blocked = compute_for(&rules, "src/secret/key.pem");
-        assert_eq!(blocked.effective, Policy::Deny);
+        assert_eq!(blocked.effective, Some(Policy::Deny));
         assert!(blocked.conflict);
     }
 
@@ -257,7 +317,7 @@ mod tests {
             ..Default::default()
         };
         let r = compute_for(&rules, "docs/readme.md");
-        assert_eq!(r.effective, Policy::Ask);
+        assert_eq!(r.effective, Some(Policy::Ask));
         assert!(r.conflict); // allow + ask overlap
     }
 
@@ -269,7 +329,7 @@ mod tests {
             ..Default::default()
         };
         let all = compute_all(&rules);
-        assert_eq!(all.len(), 1);
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
@@ -284,12 +344,78 @@ mod tests {
         };
 
         let allowed = compute_for(&rules, "src/app.rs");
-        assert_eq!(allowed.effective, Policy::Allow);
+        assert_eq!(allowed.effective, Some(Policy::Allow));
         assert_eq!(allowed.source_scope, Some(Scope::Managed));
 
         let denied = compute_for(&rules, "src/private/key.txt");
-        assert_eq!(denied.effective, Policy::Deny);
+        assert_eq!(denied.effective, Some(Policy::Deny));
         assert_eq!(denied.source_scope, Some(Scope::Local));
         assert!(denied.conflict);
+    }
+
+    #[test]
+    fn tool_and_home_context_are_respected() {
+        let mut edit = rule("src", Policy::Deny, AppliesTo::FolderAndChildren);
+        edit.tools = Some(vec![Tool::Edit]);
+        let rules = ScopedRules {
+            project: vec![edit],
+            user: vec![rule("~/repo/secrets/**", Policy::Deny, AppliesTo::Pattern)],
+            ..Default::default()
+        };
+        let context = MatchContext {
+            project_root: "C:/Users/u/repo".into(),
+            home: "C:/Users/u".into(),
+        };
+        assert_eq!(
+            compute_for_tool(&rules, "src/app.ts", Tool::Read, &context).effective,
+            None
+        );
+        assert_eq!(
+            compute_for_tool(&rules, "src/app.ts", Tool::Edit, &context).effective,
+            Some(Policy::Deny)
+        );
+        assert_eq!(
+            compute_for_tool(&rules, "secrets/key", Tool::Read, &context).effective,
+            Some(Policy::Deny)
+        );
+    }
+
+    #[test]
+    fn direct_children_do_not_match_grandchildren() {
+        let rules = ScopedRules {
+            project: vec![rule("docs", Policy::Allow, AppliesTo::Folder)],
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_for(&rules, "docs/a.md").effective,
+            Some(Policy::Allow)
+        );
+        assert_eq!(compute_for(&rules, "docs/sub/a.md").effective, None);
+    }
+
+    #[test]
+    fn unsupported_patterns_and_missing_context_remain_unknown() {
+        let rules = ScopedRules {
+            user: vec![rule("~/.ssh/**", Policy::Deny, AppliesTo::Pattern)],
+            ..Default::default()
+        };
+        assert!(compute_for(&rules, "src/a").incomplete);
+        assert_eq!(compute_for(&rules, "src/a").effective, None);
+        let rules = ScopedRules {
+            project: vec![rule("!sample.env", Policy::Deny, AppliesTo::Pattern)],
+            ..Default::default()
+        };
+        assert!(compute_for(&rules, "sample.env").incomplete);
+    }
+
+    #[test]
+    fn traversal_is_not_treated_as_an_allowed_child() {
+        let rules = ScopedRules {
+            project: vec![rule("src", Policy::Allow, AppliesTo::FolderAndChildren)],
+            ..Default::default()
+        };
+        let result = compute_for(&rules, "src/../secrets/key");
+        assert!(result.incomplete);
+        assert_eq!(result.effective, None);
     }
 }

@@ -1,5 +1,5 @@
 // Svelte action: `use:tooltip={'설명'}`. Renders a fixed-position tooltip on
-// hover — immune to overflow clipping inside scrollable panels, flips above
+// hover or keyboard focus (Escape hides it) — immune to overflow clipping inside scrollable panels, flips above
 // when there is no room below. Pass undefined/'' to disable.
 
 export function tooltip(node: HTMLElement, text: string | undefined) {
@@ -24,18 +24,31 @@ export function tooltip(node: HTMLElement, text: string | undefined) {
   }
 
   function scheduleShow() {
+    window.clearTimeout(timer);
     timer = window.setTimeout(show, 300);
+    document.addEventListener('keydown', onKeydown, true);
   }
 
   function hide() {
     window.clearTimeout(timer);
     el?.remove();
     el = null;
+    document.removeEventListener('keydown', onKeydown, true);
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && el) hide();
+  }
+
+  function onFocus() {
+    if (node.matches(':focus-visible')) scheduleShow();
   }
 
   node.addEventListener('mouseenter', scheduleShow);
   node.addEventListener('mouseleave', hide);
   node.addEventListener('mousedown', hide);
+  node.addEventListener('focus', onFocus);
+  node.addEventListener('blur', hide);
 
   return {
     update(t: string | undefined) {
@@ -50,6 +63,8 @@ export function tooltip(node: HTMLElement, text: string | undefined) {
       node.removeEventListener('mouseenter', scheduleShow);
       node.removeEventListener('mouseleave', hide);
       node.removeEventListener('mousedown', hide);
+      node.removeEventListener('focus', onFocus);
+      node.removeEventListener('blur', hide);
     }
   };
 }

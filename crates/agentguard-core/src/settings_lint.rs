@@ -323,7 +323,8 @@ pub fn lint_value(root: &Value) -> Vec<LintItem> {
     {
         out.push(info(
             "permissions.defaultMode",
-            "Agent Guard가 관리하지 않는 값이며, 접근 권한 규칙을 저장하면 제거됩니다".to_string(),
+            "실행 시 승인 동작을 결정하는 값입니다. 접근 권한 규칙을 저장해도 보존됩니다"
+                .to_string(),
         ));
     }
 
@@ -464,12 +465,12 @@ mod tests {
     }
 
     #[test]
-    fn default_mode_explains_agent_guard_removal_behavior() {
+    fn default_mode_explains_preservation() {
         let items = lint_value(&json!({ "permissions": { "defaultMode": "default" } }));
         assert!(items.iter().any(|item| {
             item.level == LintLevel::Info
                 && item.path == "permissions.defaultMode"
-                && item.message.contains("제거")
+                && item.message.contains("보존")
         }));
     }
 }

@@ -1,3 +1,4 @@
+import { mergeReviewedRules, scopeSignature } from './rule-merge';
 // Shared app state (Svelte 5 runes). A single module-level object holds the open
 // project and its editable rule set; both routes import it so navigation preserves
 // state without a server round-trip.
@@ -29,7 +30,10 @@ export const app = $state({
   scoped: emptyScoped(),
   activeScope: 'project' as ScopeName,
   selectedPath: '',
-  dirty: false,
+  savedScopes: {} as Partial<Record<ScopeName, string>>,
+  get dirty() {
+    return (['user', 'project', 'local'] as const).some((scope) => isScopeDirty(scope));
+  },
   effective: [] as EffectivePolicy[]
 });
 
@@ -41,7 +45,8 @@ export function reset() {
   app.view = null;
   app.scoped = emptyScoped();
   app.selectedPath = '';
-  app.dirty = false;
+  app.activeScope = 'project';
+  markAllScopesSaved();
   app.effective = [];
 }
 
@@ -53,7 +58,8 @@ export function setProject(view: ProjectView, scoped: ScopedRulesDto) {
   app.projectName = view.project.name;
   app.scoped = scoped;
   app.selectedPath = '';
-  app.dirty = false;
+  app.activeScope = 'project';
+  markAllScopesSaved();
 }
 
 /** Upsert a rule for a path into the active scope (one rule per path+scope). */
@@ -63,14 +69,12 @@ export function setPolicy(path: string, policy: PolicyRule['policy'], appliesTo:
   const rule: PolicyRule = { path, policy, appliesTo };
   if (idx >= 0) bucket.rules[idx] = rule;
   else bucket.rules.push(rule);
-  app.dirty = true;
 }
 
 /** Remove any explicit rule for a path in the active scope. */
 export function clearPolicy(path: string) {
   const bucket = app.scoped[app.activeScope];
   bucket.rules = bucket.rules.filter((r) => r.path !== path);
-  app.dirty = true;
 }
 
 /** Upsert a full rule into an explicit scope (one rule per path). */
@@ -79,33 +83,39 @@ export function upsertRule(scope: ScopeName, rule: PolicyRule) {
   const idx = bucket.rules.findIndex((r) => r.path === rule.path);
   if (idx >= 0) bucket.rules[idx] = rule;
   else bucket.rules.push(rule);
-  app.dirty = true;
 }
 
 /** Remove the rule for `path` in an explicit scope. */
 export function removeRule(scope: ScopeName, path: string) {
   const bucket = app.scoped[scope];
   bucket.rules = bucket.rules.filter((r) => r.path !== path);
-  app.dirty = true;
 }
 
 /** Set the non-path capability denies (web/network block) for a scope. */
 export function setExtraDeny(scope: ScopeName, list: string[]) {
   app.scoped[scope].extraDeny = list;
-  app.dirty = true;
 }
 
-/** Merge a batch of rules into a scope (upsert by path). */
-export function mergeRules(scope: ScopeName, rules: PolicyRule[]) {
-  const bucket = app.scoped[scope];
-  for (const rule of rules) {
-    const idx = bucket.rules.findIndex((r) => r.path === rule.path);
-    if (idx >= 0) bucket.rules[idx] = rule;
-    else bucket.rules.push(rule);
-  }
-  app.dirty = true;
+/** Merge reviewed candidates; existing decisions survive unless explicitly selected for replacement. */
+export function mergeRules(scope: ScopeName, rules: PolicyRule[], replacePaths: string[] = []) {
+  app.scoped[scope].rules = mergeReviewedRules(app.scoped[scope].rules, rules, replacePaths);
 }
 
+export function isScopeDirty(scope: ScopeName): boolean {
+  return scopeSignature(app.scoped[scope]) !== (app.savedScopes[scope] ?? scopeSignature(emptyScoped()[scope]));
+}
+
+export function markScopeSaved(scope: ScopeName, value = app.scoped[scope]) {
+  app.savedScopes[scope] = scopeSignature(value);
+}
+
+export function markAllScopesSaved() {
+  for (const scope of ['managed', 'user', 'project', 'local'] as const) markScopeSaved(scope);
+}
+
+let effectiveRequest = 0;
 export async function refreshEffective() {
-  app.effective = await computeEffective(app.scoped);
+  const request = ++effectiveRequest;
+  const result = await computeEffective($state.snapshot(app.scoped), app.projectRoot);
+  if (request === effectiveRequest) app.effective = result;
 }

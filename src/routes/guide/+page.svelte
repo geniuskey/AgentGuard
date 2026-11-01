@@ -6,7 +6,7 @@
   // browsable at a glance, and contextual links (?s=<key>) scroll straight to the
   // section relevant to the screen the user came from.
   import { onMount } from 'svelte';
-  import { afterNavigate } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { marked } from 'marked';
   import { page } from '$app/stores';
   import guideMd from '../../../docs/user-guide.md?raw';
@@ -90,18 +90,29 @@
   });
 
   function back() {
-    history.back();
+    if (history.length > 1) history.back();
+    else goto('/');
   }
 </script>
 
 <div class="page">
   <nav class="toc" aria-label="도움말 목차">
-    <button class="back" onclick={back}>← 뒤로</button>
+    <button class="btn btn-ghost btn-sm back" onclick={back} aria-label="뒤로">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+        <path d="M15 6 9 12l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      뒤로
+    </button>
     <div class="toc-title">도움말 목차</div>
     <ul>
       {#each sections as s (s.id)}
         <li>
-          <button class="toc-link" class:active={activeId === s.id} onclick={() => scrollToId(s.id)}>
+          <button
+            class="toc-link"
+            class:active={activeId === s.id}
+            aria-current={activeId === s.id ? 'location' : undefined}
+            onclick={() => scrollToId(s.id)}
+          >
             {s.title}
           </button>
         </li>
@@ -139,18 +150,6 @@
   }
   .back {
     align-self: flex-start;
-    background: none;
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.28rem 0.6rem;
-    cursor: pointer;
-    font-size: 0.8rem;
-    transition: color var(--t-fast), background-color var(--t-fast);
-  }
-  .back:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
   }
   .toc-title {
     font-size: 0.7rem;
@@ -207,7 +206,7 @@
     border-radius: 4px;
   }
 
-  @media (max-width: 820px) {
+  @media (max-width: 700px) {
     .page {
       grid-template-columns: 1fr;
       gap: 1rem;
@@ -282,15 +281,6 @@
     padding: 0.08rem 0.35rem;
     border-radius: 4px;
     font-size: 0.84em;
-  }
-  .md :global(kbd) {
-    background: var(--bg-3);
-    border: 1px solid var(--border-strong);
-    border-bottom-width: 2px;
-    border-radius: 5px;
-    padding: 0.05rem 0.4rem;
-    font-size: 0.78em;
-    color: var(--text-2);
   }
   .md :global(table) {
     border-collapse: collapse;

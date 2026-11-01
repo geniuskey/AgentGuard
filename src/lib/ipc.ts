@@ -30,6 +30,8 @@ export interface ScopeRules {
   extraDeny: string[];
   /** Administrator policy makes managed allow/ask/deny rules exclusive. */
   enforceManagedOnly?: boolean;
+  /** Preserved whole-tool rules, included only in comparison. */
+  wholeToolRules?: PolicyRule[];
 }
 
 export interface ScopedRulesDto {
@@ -53,6 +55,7 @@ export interface ScanResult {
   signals: Record<string, boolean>;
   denyCandidates: string[];
   allowCandidates: string[];
+  candidates: { path: string; isDir: boolean; reason: string }[];
 }
 
 export interface RiskScore {
@@ -97,7 +100,9 @@ export interface ClaudeProjectTrustStatus {
 
 export interface EffectivePolicy {
   path: string;
-  effective: Policy;
+  effective: Policy | null;
+  tool: Tool;
+  incomplete: boolean;
   sourceScope: ScopeName | null;
   explicit: boolean;
   conflict: boolean;
@@ -191,8 +196,13 @@ export async function claudeProjectTrustStatus(
   return invoke<ClaudeProjectTrustStatus>('claude_project_trust_status', { projectRoot });
 }
 
-export async function computeEffective(scoped: ScopedRulesDto): Promise<EffectivePolicy[]> {
-  return invoke<EffectivePolicy[]>('compute_effective', { scoped });
+export async function computeEffective(scoped: ScopedRulesDto, projectRoot = ''): Promise<EffectivePolicy[]> {
+  return invoke<EffectivePolicy[]>('compute_effective', { scoped, projectRoot });
+}
+
+export async function effectiveFor(scoped: ScopedRulesDto, targetPath: string, projectRoot: string, pathTool: Tool): Promise<EffectivePolicy> {
+  if (!inTauri()) return { path: targetPath, tool: pathTool, effective: null, incomplete: true, sourceScope: null, explicit: false, conflict: false };
+  return invoke<EffectivePolicy>('effective_for', { scoped, targetPath, projectRoot, pathTool });
 }
 
 export async function toSettingsPreview(rules: PolicyRule[]): Promise<Permissions> {
@@ -213,6 +223,7 @@ export async function saveSettings(args: {
   scope: ScopeName;
   scopeRules: ScopeRules;
   projectName: string;
+  expectedBefore: string;
 }): Promise<SaveResult> {
   return invoke<SaveResult>('save_settings', {
     projectRoot: args.projectRoot,
@@ -220,7 +231,8 @@ export async function saveSettings(args: {
     scope: args.scope,
     scopeRules: args.scopeRules,
     timestamp: backupTimestamp(),
-    projectName: args.projectName
+    projectName: args.projectName,
+    expectedBefore: args.expectedBefore
   });
 }
 
@@ -347,6 +359,7 @@ export async function noteIgnoredPath(projectRoot: string, relPath: string): Pro
 
 export async function policyReport(args: {
   projectName: string;
+  projectRoot: string;
   profile: string | null;
   scoped: ScopedRulesDto;
   riskScore: number;
@@ -537,7 +550,8 @@ export interface SimMatch {
 export interface SimResult {
   query: string;
   kind: 'path' | 'command';
-  decision: Policy;
+  decision: Policy | null;
+  notes: string[];
   matches: SimMatch[];
   fallback: boolean;
 }
@@ -551,9 +565,10 @@ export async function simulateAccess(
   scoped: ScopedRulesDto,
   query: string,
   kind: 'path' | 'command',
-  shellTool: 'Bash' | 'PowerShell' = 'PowerShell'
+  shellTool: 'Bash' | 'PowerShell' = 'PowerShell',
+  pathTool: Tool = 'Read'
 ): Promise<SimResult> {
-  return invoke<SimResult>('simulate_access', { projectRoot, scoped, query, kind, shellTool });
+  return invoke<SimResult>('simulate_access', { projectRoot, scoped, query, kind, shellTool, pathTool });
 }
 
 // --- Agent surface: hooks & MCP servers ----------------------------------------

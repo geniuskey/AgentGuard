@@ -7,6 +7,11 @@
   let status = $state<EnvStatus | null>(null);
   let error = $state<string | null>(null);
 
+  function back() {
+    if (history.length > 1) history.back();
+    else goto('/');
+  }
+
   onMount(async () => {
     try {
       status = await getEnvStatus();
@@ -18,23 +23,28 @@
 
 <main>
   <div class="head">
-    <button class="back" onclick={() => history.back()}>← 뒤로</button>
+    <button class="btn btn-ghost btn-sm" onclick={back} aria-label="뒤로">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+        <path d="M15 6 9 12l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      뒤로
+    </button>
     <HelpButton section="env" compact />
   </div>
-  <h1>Bedrock / Environment</h1>
+  <h1>환경 변수 · Bedrock</h1>
   <p class="tagline">읽기 전용 상태입니다. Agent Guard는 Secret 값을 저장하거나 전송하지 않습니다.</p>
 
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
+  {#if error}<p class="callout callout-error notice" role="alert">{error}</p>{/if}
 
   {#if status}
     {#if status.hasSecretInEnv}
-      <div class="warn">
+      <div class="callout callout-warn notice">
         환경에 AWS Secret 값이 감지되었습니다. 가능하면 <b>AWS_PROFILE</b> 또는 사내 인증 체계를
         사용하고, <code>settings.json</code>에 Secret을 직접 저장하지 마세요.
       </div>
     {/if}
     {#if status.usesProfile}
-      <div class="ok">AWS_PROFILE 사용 중 — 권장 구성입니다.</div>
+      <div class="callout callout-ok notice">AWS_PROFILE 사용 중 — 권장 구성입니다.</div>
     {/if}
 
     <div class="table-wrap">
@@ -48,7 +58,7 @@
                 {#if v.present}
                   <span class="pill pill-on"><span class="dot" aria-hidden="true"></span>설정됨</span>
                 {:else}
-                  <span class="pill pill-off">—</span>
+                  <span class="pill pill-off"><span aria-hidden="true">—</span><span class="sr-only">설정 안 됨</span></span>
                 {/if}
               </td>
               <td class="val">{v.display || ''}</td>
@@ -74,20 +84,6 @@
     justify-content: space-between;
     gap: 0.6rem;
   }
-  .back {
-    background: none;
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: var(--r-sm);
-    padding: 0.28rem 0.6rem;
-    cursor: pointer;
-    font-size: 0.8rem;
-    transition: color var(--t-fast), background-color var(--t-fast);
-  }
-  .back:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
   h1 {
     font-size: 1.45rem;
     letter-spacing: -0.02em;
@@ -98,37 +94,8 @@
     margin-top: 0;
     font-size: 0.85rem;
   }
-  .warn {
-    background: var(--ask-soft);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-    color: var(--ask);
-    padding: 0.65rem 0.85rem;
-    border-radius: var(--r-sm);
-    margin: 1rem 0;
-    font-size: 0.85rem;
-    line-height: 1.5;
-  }
-  .warn code {
-    background: rgba(0, 0, 0, 0.25);
-    padding: 0 0.3rem;
-    border-radius: 3px;
-  }
-  .ok {
-    background: var(--allow-soft);
-    border: 1px solid rgba(52, 211, 153, 0.3);
-    color: var(--allow);
-    padding: 0.55rem 0.85rem;
-    border-radius: var(--r-sm);
-    margin: 0.5rem 0;
-    font-size: 0.85rem;
-  }
-  .err {
-    color: var(--deny);
-    background: var(--deny-soft);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-    border-radius: var(--r-sm);
-    padding: 0.5rem 0.8rem;
-    font-size: 0.85rem;
+  .notice {
+    margin: 0.6rem 0;
   }
   .muted {
     color: var(--text-3);
@@ -189,7 +156,7 @@
   .pill-on {
     background: var(--allow-soft);
     color: var(--allow);
-    border: 1px solid rgba(52, 211, 153, 0.3);
+    border: 1px solid var(--allow-line);
   }
   .pill-on .dot {
     width: 6px;

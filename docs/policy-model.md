@@ -131,8 +131,8 @@ Ask    "docs/**"     → permissions.ask   += [ 위 2개 도구의 ./docs/** ]
 }
 ```
 
-> `permissions.defaultMode`(deny-by-default)는 더 이상 사용하지 않는다. 정책은 명시적 경로
-> 규칙만으로 통제하며, 파일에 남은 `defaultMode`는 저장 시 제거된다(effective-policy.md §2 참조).
+> `permissions.defaultMode`는 실행 모드 설정이며 경로 규칙 편집 시 보존한다.
+> 규칙이 없다고 Ask를 의미하지 않으며 실제 승인 결과는 실행 환경에 따라 달라진다.
 
 ---
 
@@ -158,7 +158,7 @@ Ask    "docs/**"     → permissions.ask   += [ 위 2개 도구의 ./docs/** ]
 요구사항서 13장 원칙을 구현 규칙으로 확정:
 
 1. **보존 파싱**: Rust `serde_json::Value`로 전체 트리를 읽는다. AG는
-   `permissions.allow/deny/ask`만 다루고(그리고 legacy `permissions.defaultMode`는 저장 시 제거)
+   `permissions.allow/deny/ask`만 다루고(`permissions.defaultMode` 등 다른 값은 보존)
    **나머지 모든 키·값은 손대지 않는다**.
    (top-level `env`, `hooks`, `model`, `$schema`, 그리고 `permissions` 내 `additionalDirectories` 등)
 2. **미관리 규칙 보존**: allow/deny/ask 배열 안에서도 AG가 파싱하지 못한 원소는 원위치·원순서로 유지.
