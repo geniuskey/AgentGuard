@@ -468,7 +468,6 @@
 
 <div class="page">
   <div class="top">
-    <button class="btn btn-ghost btn-icon back" onclick={() => goto('/')} aria-label="홈으로">←</button>
     <div class="title">
       <span class="pname truncate">{app.projectName}</span>
       {#if app.view}<span class="scan-summary truncate" use:tooltip={scanSummary}>{scanSummary}</span>{/if}
@@ -738,6 +737,7 @@
 
 <style>
   .page {
+    container-type: inline-size;
     height: 100dvh;
     display: flex;
     flex-direction: column;
@@ -752,10 +752,6 @@
     background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
     flex-shrink: 0;
     min-width: 0;
-  }
-  .back {
-    flex-shrink: 0;
-    font-size: var(--fs-lg);
   }
   .title {
     flex: 1;
@@ -956,13 +952,13 @@
     margin-top: 0.6rem;
   }
 
-  @media (max-width: 1000px) {
+  @container (max-width: 960px) {
     .scan-summary {
       display: none;
     }
   }
 
-  @media (max-width: 900px) {
+  @container (max-width: 860px) {
     .workspace-tabs {
       display: flex;
       flex-shrink: 0;
@@ -994,7 +990,7 @@
     }
   }
 
-  @media (max-width: 700px) {
+  @container (max-width: 660px) {
     .top {
       gap: 0.4rem;
       padding: 0.45rem 0.55rem;

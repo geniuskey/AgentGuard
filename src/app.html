@@ -8,8 +8,9 @@
     <script>
       // Apply the saved theme before first paint to avoid a dark->light flash.
       try {
-        document.documentElement.dataset.theme =
-          localStorage.getItem('ag-theme') === 'light' ? 'light' : 'dark';
+        var t = localStorage.getItem('ag-theme');
+        if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.dataset.theme = t === 'light' ? 'light' : 'dark';
       } catch (e) {}
     </script>
     %sveltekit.head%

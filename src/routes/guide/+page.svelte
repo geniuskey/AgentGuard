@@ -6,7 +6,7 @@
   // browsable at a glance, and contextual links (?s=<key>) scroll straight to the
   // section relevant to the screen the user came from.
   import { onMount } from 'svelte';
-  import { afterNavigate, goto } from '$app/navigation';
+  import { afterNavigate } from '$app/navigation';
   import { marked } from 'marked';
   import { page } from '$app/stores';
   import guideMd from '../../../docs/user-guide.md?raw';
@@ -88,46 +88,40 @@
     const id = targetForKey($page.url.searchParams.get('s'));
     if (id) requestAnimationFrame(() => scrollToId(id));
   });
-
-  function back() {
-    if (history.length > 1) history.back();
-    else goto('/');
-  }
 </script>
 
-<div class="page">
-  <nav class="toc" aria-label="도움말 목차">
-    <button class="btn btn-ghost btn-sm back" onclick={back} aria-label="뒤로">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
-        <path d="M15 6 9 12l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      뒤로
-    </button>
-    <div class="toc-title">도움말 목차</div>
-    <ul>
-      {#each sections as s (s.id)}
-        <li>
-          <button
-            class="toc-link"
-            class:active={activeId === s.id}
-            aria-current={activeId === s.id ? 'location' : undefined}
-            onclick={() => scrollToId(s.id)}
-          >
-            {s.title}
-          </button>
-        </li>
-      {/each}
-    </ul>
-  </nav>
+<div class="guide">
+  <div class="page">
+    <nav class="toc" aria-label="도움말 목차">
+      <div class="toc-title">도움말 목차</div>
+      <ul>
+        {#each sections as s (s.id)}
+          <li>
+            <button
+              class="toc-link"
+              class:active={activeId === s.id}
+              aria-current={activeId === s.id ? 'location' : undefined}
+              onclick={() => scrollToId(s.id)}
+            >
+              {s.title}
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </nav>
 
-  <main>
-    <!-- eslint-disable-next-line svelte/no-at-html-tags -- our own bundled markdown -->
-    <article class="md" bind:this={article}>{@html html}</article>
-    <p class="src">출처: <code>docs/user-guide.md</code> · 로컬에서만 처리됩니다.</p>
-  </main>
+    <main>
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -- our own bundled markdown -->
+      <article class="md" bind:this={article}>{@html html}</article>
+      <p class="src">출처: <code>docs/user-guide.md</code> · 로컬에서만 처리됩니다.</p>
+    </main>
+  </div>
 </div>
 
 <style>
+  .guide {
+    container-type: inline-size;
+  }
   .page {
     max-width: 1120px;
     margin: 0 auto;
@@ -148,16 +142,12 @@
     max-height: calc(100vh - 2rem);
     overflow: auto;
   }
-  .back {
-    align-self: flex-start;
-  }
   .toc-title {
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-3);
-    margin-top: 0.4rem;
   }
   .toc ul {
     list-style: none;
@@ -206,7 +196,7 @@
     border-radius: 4px;
   }
 
-  @media (max-width: 700px) {
+  @container (max-width: 660px) {
     .page {
       grid-template-columns: 1fr;
       gap: 1rem;

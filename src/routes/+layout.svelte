@@ -1,9 +1,12 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { beforeNavigate } from '$app/navigation';
-  import { initTheme } from '$lib/theme.svelte';
+  import { beforeNavigate, goto } from '$app/navigation';
+  import { initPrefs, toggleSidebar } from '$lib/prefs.svelte';
+  import Sidebar from '$lib/components/Sidebar.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
+  import { page } from '$app/stores';
+  import { app } from '$lib/state.svelte';
   import {
     confirmDiscardChanges,
     hasUnsavedChanges,
@@ -12,12 +15,27 @@
 
   let { children } = $props();
 
+  // Remount the project page when another project is opened from the sidebar so
+  // its file watcher and per-project UI state start fresh.
+  const projectKey = $derived($page.url.pathname === '/project' ? app.projectRoot : '');
+
   beforeNavigate(({ cancel }) => {
     if (!confirmDiscardChanges(hasUnsavedChanges(), window.confirm.bind(window))) cancel();
   });
 
+  function onKeydown(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      toggleSidebar();
+    } else if (e.key === ',') {
+      e.preventDefault();
+      goto('/settings');
+    }
+  }
+
   onMount(() => {
-    initTheme();
+    const disposePrefs = initPrefs();
     let allowClose = false;
     let disposed = false;
     let unlistenClose: (() => void) | undefined;
@@ -51,19 +69,32 @@
 
     return () => {
       disposed = true;
+      disposePrefs();
       window.removeEventListener('beforeunload', onBeforeUnload);
       unlistenClose?.();
     };
   });
 </script>
 
-<div class="app">
-  {@render children()}
+<svelte:window onkeydown={onKeydown} />
+
+<div class="shell">
+  <Sidebar />
+  <div class="shell-content">
+    {#key projectKey}
+      {@render children()}
+    {/key}
+  </div>
 </div>
 <Toaster />
 
 <style>
-  .app {
+  .shell {
+    display: flex;
     min-height: 100vh;
+  }
+  .shell-content {
+    flex: 1;
+    min-width: 0;
   }
 </style>

@@ -3,21 +3,15 @@
   import { goto } from '$app/navigation';
   import {
     appInfo,
-    diagnosticReport,
     inTauri,
     listAgentGlobals,
     listRecentProjects,
-    loadSettings,
-    openProject,
     pickFolder,
     type AgentGlobal,
     type AppInfo,
     type ProjectRecord
   } from '$lib/ipc';
-  import { setProject, refreshEffective } from '$lib/state.svelte';
-  import { themeState, toggleTheme } from '$lib/theme.svelte';
-  import { toast } from '$lib/toast.svelte';
-  import HelpButton from '$lib/components/HelpButton.svelte';
+  import { loadProject } from '$lib/state.svelte';
 
   let info = $state<AppInfo | null>(null);
   let recent = $state<ProjectRecord[]>([]);
@@ -25,9 +19,7 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
   let loading = $state(true);
-  let copying = $state(false);
   const desktop = inTauri();
-  const themeLabel = $derived(themeState.current === 'dark' ? '라이트' : '다크');
 
   onMount(async () => {
     const [i, r, a] = await Promise.allSettled([appInfo(), listRecentProjects(), listAgentGlobals()]);
@@ -59,10 +51,7 @@
     busy = true;
     error = null;
     try {
-      const view = await openProject(path);
-      const scoped = await loadSettings(view.project.path);
-      setProject(view, scoped);
-      await refreshEffective();
+      await loadProject(path);
       await goto('/project');
     } catch (e) {
       error = String(e);
@@ -79,18 +68,6 @@
     await open(await pickFolder());
   }
 
-  async function copyDiagnostics() {
-    copying = true;
-    try {
-      const report = await diagnosticReport();
-      await navigator.clipboard.writeText(report);
-      toast('비밀값을 제외한 진단 정보를 클립보드에 복사했습니다.');
-    } catch (e) {
-      toast(`진단 정보 복사 실패: ${String(e)}`, 'error');
-    } finally {
-      copying = false;
-    }
-  }
 </script>
 
 <main>
@@ -125,37 +102,6 @@
       <p class="tagline">
         코딩 에이전트가 프로젝트에서 접근할 수 있는 경계를 눈으로 보고 안전하게 설정하세요.
       </p>
-    </div>
-    <div class="hero-actions">
-      <HelpButton section="home" />
-      <button
-        class="theme-toggle"
-        onclick={toggleTheme}
-        title={themeState.current === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'}
-        aria-label="{themeLabel} 테마로 전환"
-      >
-        {#if themeState.current === 'dark'}
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.6" />
-            <path
-              d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3m14.8-6.8-1.6 1.6M7.8 16.2l-1.6 1.6m11.6 0-1.6-1.6M7.8 7.8 6.2 6.2"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
-          </svg>
-        {:else}
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-            <path
-              d="M20.2 14.1A8.2 8.2 0 0 1 9.9 3.8a8.2 8.2 0 1 0 10.3 10.3Z"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linejoin="round"
-            />
-          </svg>
-        {/if}
-        {themeLabel}
-      </button>
     </div>
   </header>
 
@@ -261,11 +207,6 @@
     <span class="footer-info truncate">
       {#if info}{info.name} v{info.version} · db v{info.dbSchemaVersion} · {displayPath(info.dataDir)}{/if}
     </span>
-    {#if desktop}
-      <button class="btn btn-ghost btn-sm" onclick={copyDiagnostics} disabled={copying}>
-        {copying ? '복사 중…' : '진단 정보 복사'}
-      </button>
-    {/if}
   </footer>
 </main>
 
@@ -282,37 +223,6 @@
   }
   .hero-text {
     min-width: 0;
-  }
-  .hero-actions {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-shrink: 0;
-    align-self: flex-start;
-  }
-  .hero-actions :global(button) {
-    white-space: nowrap;
-  }
-  .theme-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: var(--bg-1);
-    border: 1px solid var(--border-strong);
-    color: var(--text-2);
-    border-radius: 999px;
-    padding: 0.34rem 0.8rem;
-    cursor: pointer;
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    white-space: nowrap;
-    transition: color var(--t-fast), border-color var(--t-fast), background-color var(--t-fast);
-  }
-  .theme-toggle:hover {
-    color: var(--text-1);
-    border-color: var(--accent);
-    background: var(--bg-2);
   }
   .logo {
     flex-shrink: 0;
@@ -573,9 +483,5 @@
   }
   .footer-info {
     flex: 1;
-  }
-  footer .btn {
-    flex-shrink: 0;
-    font-family: var(--font-sans);
   }
 </style>

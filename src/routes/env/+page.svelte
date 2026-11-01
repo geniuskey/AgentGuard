@@ -1,16 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import { getEnvStatus, type EnvStatus } from '$lib/ipc';
   import HelpButton from '$lib/components/HelpButton.svelte';
 
   let status = $state<EnvStatus | null>(null);
   let error = $state<string | null>(null);
-
-  function back() {
-    if (history.length > 1) history.back();
-    else goto('/');
-  }
 
   onMount(async () => {
     try {
@@ -23,15 +17,9 @@
 
 <main>
   <div class="head">
-    <button class="btn btn-ghost btn-sm" onclick={back} aria-label="뒤로">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
-        <path d="M15 6 9 12l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      뒤로
-    </button>
+    <h1>환경 변수 · Bedrock</h1>
     <HelpButton section="env" compact />
   </div>
-  <h1>환경 변수 · Bedrock</h1>
   <p class="tagline">읽기 전용 상태입니다. Agent Guard는 Secret 값을 저장하거나 전송하지 않습니다.</p>
 
   {#if error}<p class="callout callout-error notice" role="alert">{error}</p>{/if}
@@ -83,11 +71,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.6rem;
+    margin-bottom: 0.25rem;
   }
   h1 {
     font-size: 1.45rem;
     letter-spacing: -0.02em;
-    margin: 1.2rem 0 0.25rem;
+    margin: 0;
   }
   .tagline {
     color: var(--text-2);

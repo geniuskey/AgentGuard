@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import { buildDiff, inTauri, loadSettings, saveSettings, type DiffView, type ScopeRules } from '$lib/ipc';
   import { app, refreshEffective, reset, markScopeSaved } from '$lib/state.svelte';
   import RuleListEditor from '$lib/components/RuleListEditor.svelte';
@@ -123,7 +122,6 @@
 
 <main>
   <div class="top">
-    <button class="btn btn-ghost btn-icon" onclick={() => goto('/')} aria-label="홈으로" title="홈으로">←</button>
     <div class="title">사용자 설정</div>
     <code class="path">~/.claude/settings.json</code>
 

@@ -34,7 +34,6 @@
 
 <main>
   <div class="top">
-    <button class="btn btn-ghost btn-icon" onclick={() => goto('/')} aria-label="홈으로" title="홈으로">←</button>
     <div class="title">
       {#if agent}{agent.name}{:else}에이전트 설정{/if}
     </div>

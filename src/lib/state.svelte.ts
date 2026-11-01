@@ -5,6 +5,8 @@ import { mergeReviewedRules, scopeSignature } from './rule-merge';
 
 import {
   computeEffective,
+  loadSettings,
+  openProject,
   type EffectivePolicy,
   type PolicyRule,
   type ProjectView,
@@ -118,4 +120,12 @@ export async function refreshEffective() {
   const request = ++effectiveRequest;
   const result = await computeEffective($state.snapshot(app.scoped), app.projectRoot);
   if (request === effectiveRequest) app.effective = result;
+}
+
+/** Opens a project folder and loads its settings into the shared state. */
+export async function loadProject(path: string) {
+  const view = await openProject(path);
+  const scoped = await loadSettings(view.project.path);
+  setProject(view, scoped);
+  await refreshEffective();
 }
