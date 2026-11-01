@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import {
@@ -77,7 +77,21 @@
 
   const others = $derived(recent.filter((p) => p.path !== app.projectRoot));
   const otherRecent = $derived(others.slice(0, app.loaded ? RECENT_LIMIT - 1 : RECENT_LIMIT));
-  const switcherRecent = $derived(others.slice(0, SWITCHER_LIMIT));
+
+  // Collapsed rail: show as many recent projects as fit without scrolling.
+  let scrollH = $state(0);
+  let contentH = $state(0);
+  let railCount = $state(0);
+  const railRecent = $derived(otherRecent.slice(0, railCount));
+  const switcherRecent = $derived(others.slice(railRecent.length, railRecent.length + SWITCHER_LIMIT));
+
+  $effect(() => {
+    if (!prefs.sidebarCollapsed) return;
+    const item = parseFloat(getComputedStyle(document.documentElement).fontSize) * 2.1;
+    const free = scrollH - contentH - 8;
+    const shown = untrack(() => railCount);
+    railCount = Math.max(0, Math.min(otherRecent.length, shown + Math.floor(free / item)));
+  });
 
   function parentDir(path: string): string {
     return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
@@ -178,9 +192,14 @@
   {/if}
 {/snippet}
 
-{#snippet mark(name: string, key: string, size = 22)}
+{#snippet mark(name: string, key: string, size?: number)}
   {@const m = projectMark(name, key)}
-  <span class="mark" style:--mark-hue={m.hue} style:--mark-size="{size}px" aria-hidden="true">{m.text}</span>
+  <span
+    class="mark"
+    style:--mark-hue={m.hue}
+    style:--mark-size={size ? `${size}px` : undefined}
+    aria-hidden="true">{m.text}</span
+  >
 {/snippet}
 
 {#snippet link(item: NavItem)}
@@ -216,7 +235,8 @@
     <span class="label">Agent Guard</span>
   </div>
 
-  <div class="scroll">
+  <div class="scroll" bind:clientHeight={scrollH}>
+    <div bind:clientHeight={contentH}>
     {@render link({ href: '/', label: '홈', icon: 'home' })}
 
     <div class="group-title">프로젝트</div>
@@ -233,6 +253,18 @@
       </a>
     {/if}
     {#if prefs.sidebarCollapsed}
+      {#each railRecent as p (p.id)}
+        <button
+          class="nav-item"
+          onclick={() => switchTo(p.path)}
+          disabled={opening}
+          aria-label={p.name}
+          use:tooltip={`${p.name}
+${p.path}`}
+        >
+          {@render mark(p.name, p.path)}
+        </button>
+      {/each}
       <button
         class="nav-item subtle"
         data-switcher-toggle
@@ -262,6 +294,7 @@
       {@render link(item)}
     {/each}
     {@render link({ href: '/env', label: '환경 변수', icon: 'env' })}
+    </div>
   </div>
 
   <div class="footer">
@@ -323,16 +356,6 @@
     style:left="{switcher.left}px"
   >
     <div class="sw-title">프로젝트 전환</div>
-    {#if app.loaded}
-      <a href="/project" class="sw-item current" role="menuitem" onclick={() => (switcher = null)}>
-        {@render mark(app.projectName, app.projectRoot, 28)}
-        <span class="sw-text">
-          <span class="sw-name truncate">{app.projectName}</span>
-          <span class="sw-path truncate">{parentDir(app.projectRoot)}</span>
-        </span>
-        <span class="sw-tag">현재</span>
-      </a>
-    {/if}
     {#each switcherRecent as p (p.id)}
       <button class="sw-item" role="menuitem" onclick={() => switchTo(p.path)} disabled={opening} title={p.path}>
         {@render mark(p.name, p.path, 28)}
@@ -342,10 +365,10 @@
         </span>
       </button>
     {/each}
-    {#if !app.loaded && switcherRecent.length === 0}
+    {#if others.length === 0}
       <p class="sw-empty">최근 프로젝트가 없습니다.</p>
     {/if}
-    <div class="sw-sep"></div>
+    {#if switcherRecent.length || others.length === 0}<div class="sw-sep"></div>{/if}
     <button class="sw-item" role="menuitem" onclick={openFolder} disabled={opening}>
       <span class="sw-icon">{@render icon('plus')}</span>
       <span class="sw-name">{opening ? '여는 중…' : '폴더 열기…'}</span>
@@ -468,15 +491,19 @@
     flex-shrink: 0;
     display: grid;
     place-items: center;
+    --mark-size: 22px;
     width: var(--mark-size);
     height: var(--mark-size);
     border-radius: calc(var(--mark-size) * 0.27);
     background: oklch(0.56 0.13 var(--mark-hue));
     color: #fff;
-    font-size: calc(var(--mark-size) * 0.42);
+    font-size: calc(var(--mark-size) * 0.5);
     font-weight: 650;
     letter-spacing: -0.02em;
     line-height: 1;
+  }
+  .collapsed .mark {
+    --mark-size: 28px;
   }
   .collapsed .nav-item[aria-current='page'] .mark {
     outline: 2px solid var(--text-1);
@@ -571,9 +598,6 @@
     cursor: progress;
     opacity: 0.6;
   }
-  .sw-item.current {
-    background: var(--bg-3);
-  }
   .sw-text {
     flex: 1;
     min-width: 0;
@@ -587,10 +611,6 @@
     color: var(--text-3);
     font-size: var(--fs-xs);
     font-family: var(--font-mono);
-  }
-  .sw-tag {
-    color: var(--text-3);
-    font-size: var(--fs-xs);
   }
   .sw-icon {
     display: grid;
