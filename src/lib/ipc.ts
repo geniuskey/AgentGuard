@@ -604,6 +604,42 @@ export async function inspectAgentSurface(projectRoot: string): Promise<AgentSur
   return invoke<AgentSurface>('inspect_agent_surface', { projectRoot });
 }
 
+export type McpTarget = 'project' | 'user' | 'local';
+
+export interface ImportedServer {
+  name: string;
+  config: Record<string, unknown>;
+  scopeHint: McpTarget | null;
+  warnings: string[];
+}
+
+/** Parse a pasted `claude mcp add ...` command or JSON snippet. Throws a Korean error string. */
+export async function mcpParseImport(text: string): Promise<ImportedServer[]> {
+  if (!inTauri()) return [];
+  return invoke<ImportedServer[]>('mcp_parse_import', { text });
+}
+
+/** Diff of the mcpServers section only; `config: null` removes the server. */
+export async function mcpPreview(
+  projectRoot: string,
+  target: McpTarget,
+  name: string,
+  config: Record<string, unknown> | null
+): Promise<DiffView> {
+  return invoke<DiffView>('mcp_preview', { projectRoot, target, name, config });
+}
+
+export async function mcpSave(args: {
+  projectRoot: string;
+  projectId: string;
+  projectName: string;
+  target: McpTarget;
+  name: string;
+  config: Record<string, unknown> | null;
+}): Promise<SaveResult> {
+  return invoke<SaveResult>('mcp_save', { ...args, timestamp: backupTimestamp() });
+}
+
 // --- External-change watcher ----------------------------------------------------
 
 export async function watchProject(projectRoot: string): Promise<void> {

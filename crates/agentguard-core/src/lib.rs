@@ -14,6 +14,7 @@ pub mod env;
 pub mod fs_scan;
 pub mod gitignore;
 pub mod inspect;
+pub mod mcp_edit;
 pub mod model;
 pub mod paths;
 pub mod policy;

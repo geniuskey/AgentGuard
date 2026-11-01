@@ -212,7 +212,7 @@ fn check_known(key: &str, expect: &Expect, v: &Value, out: &mut Vec<LintItem>) {
     }
 }
 
-fn secret_looking(name: &str, value: &str) -> bool {
+pub(crate) fn secret_looking(name: &str, value: &str) -> bool {
     if value.is_empty() {
         return false;
     }

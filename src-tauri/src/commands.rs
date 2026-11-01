@@ -7,6 +7,7 @@ use agentguard_core::db::{self, ProjectRecord};
 use agentguard_core::effective::{self, EffectivePolicy, ScopedRules};
 use agentguard_core::fs_scan::{self, DirEntry, ScanResult};
 use agentguard_core::inspect::{self, HookEntry, McpServer};
+use agentguard_core::mcp_edit::{self, McpTarget};
 use agentguard_core::model::{AppliesTo, Policy, PolicyRule, Scope};
 use agentguard_core::policy::{self, Permissions};
 use agentguard_core::risk::{self, RiskScore};
@@ -2021,11 +2022,130 @@ fn agent_surface(root: &Path, home: &Path) -> AgentSurface {
             "user (~/.claude.json)",
             &text,
         ));
+        mcp_servers.extend(inspect::mcp_servers_from_value(
+            "local (~/.claude.json)",
+            &mcp_edit::local_servers(&text, &root.to_string_lossy()),
+        ));
     }
     let approval = inspect::project_mcp_approval(&settings_values.iter().collect::<Vec<_>>());
     inspect::apply_project_mcp_approval(&mut mcp_servers, &approval);
 
     AgentSurface { hooks, mcp_servers }
+}
+
+// --- MCP server editing ---------------------------------------------------------
+
+fn mcp_file(project_root: &str, target: McpTarget) -> Result<PathBuf, String> {
+    if target != McpTarget::User && project_root.trim().is_empty() {
+        return Err("프로젝트를 먼저 열어야 합니다.".to_string());
+    }
+    Ok(match target {
+        McpTarget::Project => Path::new(project_root).join(".mcp.json"),
+        McpTarget::User | McpTarget::Local => paths::home_dir()
+            .map_err(|e| e.to_string())?
+            .join(".claude.json"),
+    })
+}
+
+fn pretty_section(value: &serde_json::Value) -> Result<String, String> {
+    let mut s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    s.push('\n');
+    Ok(s)
+}
+
+#[tauri::command]
+pub fn mcp_parse_import(text: String) -> Result<Vec<mcp_edit::ImportedServer>, String> {
+    mcp_edit::parse_import(&text)
+}
+
+/// Diff of only the target `mcpServers` section (the full ~/.claude.json is huge).
+#[tauri::command]
+pub fn mcp_preview(
+    project_root: String,
+    target: McpTarget,
+    name: String,
+    config: Option<serde_json::Value>,
+) -> Result<DiffView, String> {
+    let file = mcp_file(&project_root, target)?;
+    let text = read_optional_text(&file)?;
+    let after_text = mcp_edit::apply(&text, target, &project_root, &name, config.as_ref())?;
+    let before = pretty_section(&mcp_edit::section(&text, target, &project_root)?)?;
+    let after = pretty_section(&mcp_edit::section(&after_text, target, &project_root)?)?;
+    Ok(DiffView {
+        path: file.to_string_lossy().to_string(),
+        changed: before != after,
+        before,
+        after,
+    })
+}
+
+/// Upsert (`config` = Some) or remove (None) one MCP server. Re-reads the file
+/// right before writing so concurrent Claude Code writes to ~/.claude.json are kept.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn mcp_save(
+    state: State<Db>,
+    project_root: String,
+    project_id: String,
+    project_name: String,
+    target: McpTarget,
+    name: String,
+    config: Option<serde_json::Value>,
+    timestamp: String,
+) -> Result<SaveResult, String> {
+    let file = mcp_file(&project_root, target)?;
+    let text = read_optional_text(&file)?;
+    let after = mcp_edit::apply(&text, target, &project_root, &name, config.as_ref())?;
+    if mcp_edit::section(&text, target, &project_root)?
+        == mcp_edit::section(&after, target, &project_root)?
+    {
+        return Ok(SaveResult {
+            written: file.to_string_lossy().to_string(),
+            backup: None,
+        });
+    }
+
+    let (label, scope, proj) = match target {
+        McpTarget::Project => ("project-mcp", Scope::Project, Some(project_name.as_str())),
+        McpTarget::User => ("user-claude-json", Scope::User, None),
+        McpTarget::Local => (
+            "local-claude-json",
+            Scope::Local,
+            Some(project_name.as_str()),
+        ),
+    };
+    let backups = paths::backups_dir().map_err(|e| e.to_string())?;
+    let backup_name = backup::backup_filename(&timestamp, proj, label);
+    let backup_path = backup::backup(&file, &backups, &backup_name).map_err(|e| e.to_string())?;
+    backup::atomic_write(&file, &after).map_err(|e| e.to_string())?;
+
+    if let Some(bp) = &backup_path {
+        let proj_id = (!project_id.is_empty()).then_some(project_id.as_str());
+        let db_result = (|| {
+            let conn = state.0.lock().map_err(|e| e.to_string())?;
+            db::record_backup(
+                &conn,
+                proj_id,
+                scope,
+                &file.to_string_lossy(),
+                &bp.to_string_lossy(),
+                &timestamp,
+            )
+            .map_err(|e| e.to_string())
+        })();
+        if let Err(error) = db_result {
+            return Err(metadata_failure_after_write(
+                &file,
+                backup_path.as_ref(),
+                error,
+            ));
+        }
+    }
+
+    Ok(SaveResult {
+        written: file.to_string_lossy().to_string(),
+        backup: backup_path.map(|p| p.to_string_lossy().to_string()),
+    })
 }
 
 /// Read-only view of hooks + MCP servers for the current project.

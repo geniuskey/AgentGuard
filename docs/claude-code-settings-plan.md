@@ -98,7 +98,13 @@ Phase 배정과 무관하게, 발견된 문제를 빠짐없이 기록한다. 완
   모두 모델링한 것은 아니므로 위험도는 보수적 heuristic이다. (2026-07-22)
 - [x] **MCP 승인 키 반영**: `enableAllProjectMcpServers` / `enabled/disabledMcpjsonServers`
   를 병합해 project MCP의 활성/승인 대기/명시적 비활성 상태를 표시한다. (2026-07-22)
-- [ ] **hooks/MCP 편집 불가**: 읽기 전용 → 템플릿 기반 편집기. (Phase 2)
+- [x] **MCP 편집**: 서버 추가/삭제(project `.mcp.json` / local·user `~/.claude.json`), 붙여넣기
+  가져오기(JSON·`claude mcp add`·`add-json`), 오프라인 추천 카탈로그(네트워크 없이 동작 요구사항 때문에
+  실시간 레지스트리 조회는 하지 않음), 섹션 단위 Diff + 백업, 저장 직전 재읽기. local 스코프 MCP를
+  표면 스캔에 포함. 프로젝트 MCP 켜기/끄기는 `settings.local.json`의
+  `enabled/disabledMcpjsonServers`에 기록하고, 다른 스코프 값이 우선하면 저장 후 알린다.
+  붙여넣은 `npx` 설정은 Windows에서 한 번에 `cmd /c`로 감쌀 수 있다. (2026-11-02)
+- [ ] **hooks 편집 불가**: 읽기 전용 → 템플릿 기반 편집기. (Phase 2)
 - [ ] **CLAUDE.md / rules/ 미지원**: 계층 뷰·편집·`@import`·paths 스코핑. (Phase 3)
 - [ ] **agents/skills 가시화 없음**: 스킬·서브에이전트는 임의 지침 주입/도구 사용 표면인데
   리스크 스캔 대상이 아님. (Phase 3)

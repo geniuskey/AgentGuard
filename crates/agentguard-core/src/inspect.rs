@@ -177,6 +177,8 @@ pub fn mcp_servers_from_value(source: &str, servers: &Value) -> Vec<McpServer> {
             active: !source.contains("project"),
             status_reason: if source.contains("project") {
                 "프로젝트 MCP 승인 대기".to_string()
+            } else if source.starts_with("local") {
+                "이 프로젝트 전용(local) 설정에서 활성".to_string()
             } else {
                 "사용자 설정에서 활성".to_string()
             },
