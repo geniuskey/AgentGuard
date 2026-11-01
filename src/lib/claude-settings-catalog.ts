@@ -246,7 +246,8 @@ export const ENV_GROUPS: EnvGroup[] = [
   {
     id: 'cloud',
     title: '클라우드 · 게이트웨이 연결',
-    description: 'Anthropic API 대신 AWS Bedrock, Google Vertex AI 또는 사내 게이트웨이로 연결합니다.',
+    description:
+      'Anthropic API 대신 AWS Bedrock, Google Vertex AI, Microsoft Foundry 또는 사내 게이트웨이로 연결합니다.',
     fields: [
       flag('CLAUDE_CODE_USE_BEDROCK', 'AWS Bedrock 사용', 'AWS 계정의 Bedrock을 통해 Claude를 호출합니다'),
       {
@@ -268,6 +269,13 @@ export const ENV_GROUPS: EnvGroup[] = [
         'Bedrock 인증 건너뛰기',
         '사내 LLM 게이트웨이가 AWS 인증을 대신 처리할 때만 켜세요'
       ),
+      {
+        key: 'ANTHROPIC_BEDROCK_BASE_URL',
+        label: 'Bedrock 주소 변경',
+        kind: 'text',
+        placeholder: 'https://bedrock-gateway.example.com',
+        help: '사내 게이트웨이나 별도 Bedrock 엔드포인트를 거칠 때 입력합니다'
+      },
       flag('CLAUDE_CODE_USE_VERTEX', 'Google Vertex AI 사용', 'Google Cloud의 Vertex AI를 통해 Claude를 호출합니다'),
       {
         key: 'CLOUD_ML_REGION',
@@ -289,6 +297,26 @@ export const ENV_GROUPS: EnvGroup[] = [
         '게이트웨이가 Google 인증을 대신 처리할 때만 켜세요'
       ),
       {
+        key: 'ANTHROPIC_VERTEX_BASE_URL',
+        label: 'Vertex 주소 변경',
+        kind: 'text',
+        placeholder: 'https://vertex-gateway.example.com',
+        help: '사내 게이트웨이나 별도 Vertex 엔드포인트를 거칠 때 입력합니다'
+      },
+      flag('CLAUDE_CODE_USE_FOUNDRY', 'Microsoft Foundry 사용', 'Azure의 Microsoft Foundry를 통해 Claude를 호출합니다'),
+      {
+        key: 'ANTHROPIC_FOUNDRY_RESOURCE',
+        label: 'Foundry 리소스 이름',
+        kind: 'text',
+        placeholder: 'my-resource',
+        help: 'URL이 아니라 리소스 이름만 입력합니다'
+      },
+      flag(
+        'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+        'Foundry 인증 건너뛰기',
+        '게이트웨이가 Azure 인증을 대신 처리할 때만 켜세요'
+      ),
+      {
         key: 'ANTHROPIC_BASE_URL',
         label: 'API 주소 변경',
         kind: 'text',
@@ -300,12 +328,13 @@ export const ENV_GROUPS: EnvGroup[] = [
   {
     id: 'models',
     title: '모델 세부 지정',
-    description: '별칭(opus/sonnet/haiku)이 가리킬 모델이나 보조 작업용 모델을 바꿉니다.',
+    description: '별칭(opus/sonnet/haiku/fable)이 가리킬 모델이나 보조 작업용 모델을 바꿉니다.',
     fields: [
       modelEnv('ANTHROPIC_MODEL', '시작 모델 (환경변수)', '위 "사용할 모델" 설정보다 우선합니다'),
       modelEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', '"opus" 가 가리킬 모델', 'Bedrock/Vertex에서 모델 ID가 다를 때 유용합니다'),
       modelEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', '"sonnet" 이 가리킬 모델', 'Bedrock/Vertex에서 모델 ID가 다를 때 유용합니다'),
       modelEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', '"haiku" 가 가리킬 모델', '제목 생성 등 가벼운 백그라운드 작업에도 쓰입니다'),
+      modelEnv('ANTHROPIC_DEFAULT_FABLE_MODEL', '"fable" 이 가리킬 모델', 'Bedrock/Vertex에서 모델 ID가 다를 때 유용합니다'),
       modelEnv('CLAUDE_CODE_SUBAGENT_MODEL', '서브에이전트 모델', '작업을 나눠 맡는 서브에이전트가 사용할 모델')
     ]
   },
@@ -355,6 +384,26 @@ export const ENV_GROUPS: EnvGroup[] = [
         asString: true,
         defaultText: '30,000',
         help: '이보다 긴 명령 출력은 중간이 생략됩니다'
+      },
+      {
+        key: 'CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS',
+        label: '파일 읽기 최대 길이',
+        kind: 'number',
+        unit: '토큰',
+        min: 1,
+        asString: true,
+        defaultText: '25,000',
+        help: '큰 파일을 한 번에 끝까지 읽어야 할 때 늘립니다'
+      },
+      {
+        key: 'CLAUDE_CODE_MAX_TURNS',
+        label: '한 요청당 최대 작업 단계',
+        kind: 'number',
+        unit: '회',
+        min: 1,
+        asString: true,
+        defaultText: '제한 없음',
+        help: 'Claude가 도구를 연속으로 쓰는 횟수의 상한 — 폭주를 막고 싶을 때 지정합니다'
       }
     ]
   },
@@ -403,6 +452,26 @@ export const ENV_GROUPS: EnvGroup[] = [
         min: 0,
         asString: true,
         defaultText: '제한 없음'
+      },
+      {
+        key: 'API_TIMEOUT_MS',
+        label: 'API 응답 대기 시간',
+        kind: 'number',
+        unit: '분',
+        scale: 60000,
+        min: 0,
+        asString: true,
+        defaultText: '10분',
+        help: '느린 네트워크나 프록시에서 요청이 시간 초과될 때 늘리세요'
+      },
+      {
+        key: 'CLAUDE_CODE_MAX_RETRIES',
+        label: 'API 실패 시 재시도 횟수',
+        kind: 'number',
+        unit: '회',
+        min: 0,
+        asString: true,
+        defaultText: '10회'
       }
     ]
   },
@@ -436,6 +505,63 @@ export const ENV_GROUPS: EnvGroup[] = [
         kind: 'text',
         placeholder: 'C:/certs/corp-root.pem',
         help: '사내 SSL 검사로 "인증서 오류"가 날 때 회사 인증서 파일 경로를 넣으세요'
+      },
+      {
+        key: 'CLAUDE_CODE_CERT_STORE',
+        label: '신뢰할 인증서 저장소',
+        kind: 'choice',
+        choices: [
+          { v: 'bundled,system', label: '내장 + Windows 저장소' },
+          { v: 'system', label: 'Windows 저장소만', hint: '회사가 배포한 루트 인증서만 신뢰합니다' },
+          { v: 'bundled', label: '내장 목록만', hint: 'Windows에 설치된 인증서를 무시합니다' }
+        ],
+        defaultText: '내장 + Windows 저장소'
+      },
+      {
+        key: 'CLAUDE_CODE_CLIENT_CERT',
+        label: '클라이언트 인증서 (mTLS)',
+        kind: 'text',
+        placeholder: 'C:/certs/client.pem',
+        help: '게이트웨이가 클라이언트 인증서를 요구할 때만 입력합니다'
+      },
+      {
+        key: 'CLAUDE_CODE_CLIENT_KEY',
+        label: '클라이언트 개인 키 (mTLS)',
+        kind: 'text',
+        placeholder: 'C:/certs/client-key.pem',
+        help: '키 파일의 경로만 넣습니다 — 비밀번호는 설정 파일에 저장하지 마세요'
+      }
+    ]
+  },
+  {
+    id: 'safety',
+    title: '도구 제한 · 자격 증명 보호',
+    description: 'Claude가 실행하는 명령과 MCP 서버에 비밀 값이 새지 않게 하고, 웹 도구 사용을 줄입니다.',
+    fields: [
+      flag(
+        'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
+        '실행 명령에서 비밀 값 제거',
+        '셸 명령·hooks·MCP 서버에 API 키 같은 자격 증명 환경변수를 넘기지 않습니다 (GitHub 토큰·프록시는 유지)'
+      ),
+      flag(
+        'CLAUDE_CODE_MCP_ALLOWLIST_ENV',
+        'MCP 서버에 최소 환경만 전달',
+        '로컬 MCP 서버가 내 셸 환경 전체 대신 안전한 기본값과 서버별 env만 받습니다'
+      ),
+      flag(
+        'CLAUDE_CODE_DISABLE_WEB_FETCH',
+        '웹 페이지 가져오기(WebFetch) 끄기',
+        'URL 내용을 읽는 도구를 끕니다. 웹 검색은 계속 사용할 수 있습니다'
+      ),
+      {
+        key: 'CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION',
+        label: '세션당 웹 검색 상한',
+        kind: 'number',
+        unit: '회',
+        min: 1,
+        asString: true,
+        defaultText: '200회',
+        help: '상한에 도달하면 이미 찾은 정보로 답하게 합니다 (완전히 끌 수는 없음)'
       }
     ]
   },
@@ -451,8 +577,18 @@ export const ENV_GROUPS: EnvGroup[] = [
       ),
       flag('DISABLE_TELEMETRY', '사용 통계 전송 끄기', '기능 사용 통계(Statsig)를 보내지 않습니다'),
       flag('DISABLE_ERROR_REPORTING', '오류 보고 끄기', '오류 발생 시 Sentry로 보고하지 않습니다'),
-      flag('DISABLE_BUG_COMMAND', '/bug 명령 끄기', '대화 내용을 담은 버그 신고를 보낼 수 없게 합니다'),
+      flag(
+        'DISABLE_FEEDBACK_COMMAND',
+        '/feedback · /bug · /share 끄기',
+        '대화 내용을 담은 피드백·버그 신고를 보낼 수 없게 합니다'
+      ),
+      flag('CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY', '만족도 설문 끄기', '"How is Claude doing?" 설문을 표시하지 않습니다'),
       flag('DISABLE_AUTOUPDATER', '자동 업데이트 막기', '회사에서 버전을 고정해야 할 때 사용합니다'),
+      flag(
+        'DISABLE_UPDATES',
+        '모든 업데이트 차단',
+        '자동 업데이트뿐 아니라 claude update 같은 수동 업데이트도 막습니다'
+      ),
       flag('DISABLE_COST_WARNINGS', '비용 경고 숨기기', 'API 사용 비용 안내 메시지를 표시하지 않습니다')
     ]
   },
@@ -471,6 +607,15 @@ export const ENV_GROUPS: EnvGroup[] = [
         defaultText: '자동 탐색',
         placeholder: 'bash.exe 전체 경로',
         help: 'Windows에서 "Git Bash를 찾을 수 없음" 오류가 날 때 지정하세요'
+      },
+      {
+        key: 'CLAUDE_CODE_USE_POWERSHELL_TOOL',
+        label: 'PowerShell 도구 사용 (Windows)',
+        kind: 'toggle',
+        on: '1',
+        off: '0',
+        defaultText: '자동',
+        help: '켜면 Git Bash를 거치지 않고 PowerShell 명령을 직접 실행합니다'
       },
       flag(
         'CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR',
@@ -500,7 +645,14 @@ export const SECRET_ENV: Record<string, string> = {
   AWS_BEARER_TOKEN_BEDROCK: 'Bedrock API 키',
   AWS_ACCESS_KEY_ID: 'AWS 액세스 키',
   AWS_SECRET_ACCESS_KEY: 'AWS 비밀 키',
-  AWS_SESSION_TOKEN: 'AWS 세션 토큰'
+  AWS_SESSION_TOKEN: 'AWS 세션 토큰',
+  ANTHROPIC_AWS_API_KEY: 'Claude Platform on AWS API 키',
+  ANTHROPIC_FOUNDRY_API_KEY: 'Microsoft Foundry API 키',
+  ANTHROPIC_FOUNDRY_AUTH_TOKEN: 'Microsoft Foundry 인증 토큰',
+  CLAUDE_CODE_OAUTH_TOKEN: 'Claude 로그인 토큰',
+  CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'Claude 로그인 갱신 토큰',
+  CLAUDE_CODE_CLIENT_KEY_PASSPHRASE: 'mTLS 개인 키 비밀번호',
+  MCP_CLIENT_SECRET: 'MCP OAuth 클라이언트 비밀'
 };
 
 export const KNOWN_ENV = new Set(ENV_GROUPS.flatMap((g) => g.fields.map((f) => f.key)));
@@ -535,6 +687,12 @@ export const ENV_PRESETS: EnvPreset[] = [
     label: '외부 전송 최소화',
     description: '사용 통계·오류 보고·버그 신고·자동 업데이트 통신을 모두 끕니다',
     values: () => ({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' })
+  },
+  {
+    id: 'scrub-secrets',
+    label: '비밀 값 유출 막기',
+    description: '셸 명령·hooks·MCP 서버에 자격 증명 환경변수가 전달되지 않게 합니다',
+    values: () => ({ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1', CLAUDE_CODE_MCP_ALLOWLIST_ENV: '1' })
   },
   {
     id: 'long-builds',
