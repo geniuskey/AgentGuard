@@ -292,8 +292,8 @@
   {:else}
     <div class="scroll">
       <p class="intro">
-        모든 프로젝트에 적용되는 Claude Code 설정입니다. <b>기본값</b>을 고르면 설정이 지워지고
-        Claude Code 기본 동작을 따릅니다. 항목 이름에 마우스를 올리면 실제 키가 보입니다.
+        <b>기본값</b>을 고르면 키가 지워져 Claude Code 기본 동작을 따릅니다. 항목 이름에 마우스를
+        올리면 실제 키가 보입니다.
       </p>
 
       {#each CLAUDE_GROUPS as g (g.title)}

@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { buildDiff, inTauri, loadSettings, saveSettings, type DiffView, type ScopeRules } from '$lib/ipc';
+  import {
+    buildDiff,
+    getAgentGlobal,
+    inTauri,
+    loadSettings,
+    saveSettings,
+    type DiffView,
+    type ScopeRules
+  } from '$lib/ipc';
   import { app, refreshEffective, reset, markScopeSaved } from '$lib/state.svelte';
   import RuleListEditor from '$lib/components/RuleListEditor.svelte';
   import RawJsonEditor from '$lib/components/RawJsonEditor.svelte';
@@ -17,9 +25,10 @@
 
   // User settings (`~/.claude/settings.json`) are global — they apply before any
   // project is selected. Editing them needs no open project, so we clear project
-  // state and edit the user scope directly. `rules` edits the permissions block,
-  // `general` everything else (model, env, …), `raw` the full JSON.
-  let mode = $state<Mode>('rules');
+  // state and edit the user scope directly. `general` edits everything outside the
+  // permissions block (model, env, …), `rules` the permissions block, `raw` the full JSON.
+  let mode = $state<Mode>('general');
+  let description = $state('');
   let saveSnapshot = $state<ScopeRules | null>(null);
   let diff = $state<DiffView | null>(null);
   let saving = $state(false);
@@ -27,8 +36,8 @@
   let generalPanel = $state<ReturnType<typeof ClaudeSettingsPanel>>();
 
   const modes: { id: Mode; label: string }[] = [
-    { id: 'rules', label: '접근 권한' },
     { id: 'general', label: '일반 설정' },
+    { id: 'rules', label: '접근 권한' },
     { id: 'raw', label: 'Raw JSON' }
   ];
 
@@ -36,6 +45,7 @@
 
   onMount(async () => {
     reset();
+    if (inTauri()) getAgentGlobal('claude-code').then((a) => (description = a.description)).catch(() => {});
     await loadUserRules();
   });
 
@@ -100,7 +110,7 @@
       });
       markScopeSaved('user', snapshot);
       diff = null;
-      toast('사용자 설정을 저장했습니다 (백업 생성됨)');
+      toast('Claude Code 설정을 저장했습니다 (백업 생성됨)');
     } catch (e) {
       toast(String(e), 'error');
     } finally {
@@ -122,7 +132,7 @@
 
 <main>
   <div class="top">
-    <div class="title">사용자 설정</div>
+    <div class="title">Claude Code</div>
     <code class="path">~/.claude/settings.json</code>
 
     <div class="segmented mode" role="tablist" aria-label="편집 모드">
@@ -156,7 +166,7 @@
     </span>
   </div>
 
-  <p class="tagline">모든 프로젝트에 공통 적용되는 전역 설정입니다. 저장 시 자동으로 백업됩니다.</p>
+  <p class="tagline">{description ? `${description} · ` : ''}전역 설정. 모든 프로젝트에 적용되며, 저장 시 자동으로 백업됩니다.</p>
 
   {#if !inTauri()}
     <p class="callout callout-warn notice">데스크톱 앱에서만 편집할 수 있습니다 (npm run tauri dev).</p>
@@ -194,7 +204,7 @@
       tabindex="-1"
       use:modalFocus={() => (diff = null)}
     >
-      <h3 id="user-save-title">저장 전 변경 확인 — 사용자 설정</h3>
+      <h3 id="user-save-title">저장 전 변경 확인 — Claude Code</h3>
       <p class="fp">{diff.path}</p>
       {#if diff.changed}<DiffViewer {diff} />{:else}<p class="nochg">변경 사항이 없습니다.</p>{/if}
       <div class="modal-actions">

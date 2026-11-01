@@ -32,14 +32,14 @@
   });
 
   const permChoices = (riskyAllow: boolean): Choice[] => [
-    { v: 'ask', label: '물어보기', hint: '실행할 때마다 확인을 받습니다.' },
+    { v: 'ask', label: 'ask', hint: '실행할 때마다 확인을 받습니다.' },
     {
       v: 'allow',
-      label: '자동 허용',
+      label: 'allow',
       hint: riskyAllow ? '확인 없이 바로 실행합니다. 되돌리기 어려운 작업도 포함됩니다.' : '확인 없이 바로 실행합니다.',
       risky: riskyAllow
     },
-    { v: 'deny', label: '차단', hint: '이 도구를 아예 쓰지 못하게 합니다.' }
+    { v: 'deny', label: 'deny', hint: '이 도구를 아예 쓰지 못하게 합니다.' }
   ];
 
   const perm = (
@@ -85,11 +85,11 @@
           kind: 'choice',
           defaultText: 'medium',
           choices: [
-            { v: 'minimal', label: '최소', hint: '거의 생각하지 않고 바로 답합니다. 가장 빠릅니다.' },
-            { v: 'low', label: '낮음', hint: '간단한 작업에 적합합니다.' },
-            { v: 'medium', label: '보통', hint: '속도와 품질의 균형입니다.' },
-            { v: 'high', label: '높음', hint: '복잡한 문제를 더 꼼꼼히 풉니다.' },
-            { v: 'xhigh', label: '최고', hint: '가장 깊이 생각합니다. 지원 모델에서만 동작합니다.' }
+            { v: 'minimal', label: 'minimal', hint: '거의 생각하지 않고 바로 답합니다. 가장 빠릅니다.' },
+            { v: 'low', label: 'low', hint: '간단한 작업에 적합합니다.' },
+            { v: 'medium', label: 'medium', hint: '속도와 품질의 균형입니다.' },
+            { v: 'high', label: 'high', hint: '복잡한 문제를 더 꼼꼼히 풉니다.' },
+            { v: 'xhigh', label: 'xhigh', hint: '가장 깊이 생각합니다. 지원 모델에서만 동작합니다.' }
           ]
         },
         {
@@ -99,10 +99,10 @@
           kind: 'choice',
           defaultText: 'auto',
           choices: [
-            { v: 'auto', label: '자동', hint: '모델이 알아서 적당히 요약합니다.' },
-            { v: 'concise', label: '간단히', hint: '짧게 요약합니다.' },
-            { v: 'detailed', label: '자세히', hint: '길고 자세하게 요약합니다.' },
-            { v: 'none', label: '안 보기', hint: '요약을 만들지 않습니다.' }
+            { v: 'auto', label: 'auto', hint: '모델이 알아서 적당히 요약합니다.' },
+            { v: 'concise', label: 'concise', hint: '짧게 요약합니다.' },
+            { v: 'detailed', label: 'detailed', hint: '길고 자세하게 요약합니다.' },
+            { v: 'none', label: 'none', hint: '요약을 만들지 않습니다.' }
           ]
         },
         {
@@ -112,9 +112,9 @@
           kind: 'choice',
           defaultText: 'medium',
           choices: [
-            { v: 'low', label: '짧게', hint: '핵심만 간결하게 답합니다.' },
-            { v: 'medium', label: '보통' },
-            { v: 'high', label: '자세히', hint: '배경과 이유까지 길게 설명합니다.' }
+            { v: 'low', label: 'low', hint: '핵심만 간결하게 답합니다.' },
+            { v: 'medium', label: 'medium' },
+            { v: 'high', label: 'high', hint: '배경과 이유까지 길게 설명합니다.' }
           ]
         },
         {
@@ -124,9 +124,9 @@
           kind: 'choice',
           defaultText: '모델 기본',
           choices: [
-            { v: 'friendly', label: '친근하게' },
-            { v: 'pragmatic', label: '실용적으로', hint: '군더더기 없이 일 중심으로 말합니다.' },
-            { v: 'none', label: '꾸밈 없음', hint: '특별한 말투를 입히지 않습니다.' }
+            { v: 'friendly', label: 'friendly' },
+            { v: 'pragmatic', label: 'pragmatic', hint: '군더더기 없이 일 중심으로 말합니다.' },
+            { v: 'none', label: 'none', hint: '특별한 말투를 입히지 않습니다.' }
           ]
         },
         {
@@ -137,8 +137,8 @@
           defaultText: 'openai',
           placeholder: '제공자 ID 직접 입력',
           choices: [
-            { v: 'openai', label: 'OpenAI' },
-            { v: 'oss', label: '로컬 오픈소스 (oss)' }
+            { v: 'openai', label: 'openai' },
+            { v: 'oss', label: 'oss', hint: '로컬 오픈소스 모델을 사용합니다.' }
           ]
         }
       ]
@@ -154,9 +154,9 @@
           kind: 'choice',
           defaultText: 'on-request',
           choices: [
-            { v: 'untrusted', label: '대부분 확인', hint: '안전한 읽기 명령 외에는 모두 확인을 받습니다.' },
-            { v: 'on-request', label: '필요할 때만', hint: '샌드박스 밖 작업처럼 모델이 필요하다고 판단할 때만 묻습니다.' },
-            { v: 'never', label: '묻지 않음', hint: '확인 없이 실행합니다. 실패해도 묻지 않습니다.', risky: true }
+            { v: 'untrusted', label: 'untrusted', hint: '안전한 읽기 명령 외에는 모두 확인을 받습니다.' },
+            { v: 'on-request', label: 'on-request', hint: '샌드박스 밖 작업처럼 모델이 필요하다고 판단할 때만 묻습니다.' },
+            { v: 'never', label: 'never', hint: '확인 없이 실행합니다. 실패해도 묻지 않습니다.', risky: true }
           ]
         },
         {
@@ -166,11 +166,11 @@
           kind: 'choice',
           defaultText: 'read-only',
           choices: [
-            { v: 'read-only', label: '읽기만', hint: '파일을 읽을 수만 있고 수정은 할 수 없습니다.' },
-            { v: 'workspace-write', label: '작업 폴더만 쓰기', hint: '현재 프로젝트 폴더 안에서만 파일을 수정합니다.' },
+            { v: 'read-only', label: 'read-only', hint: '파일을 읽을 수만 있고 수정은 할 수 없습니다.' },
+            { v: 'workspace-write', label: 'workspace-write', hint: '현재 프로젝트 폴더 안에서만 파일을 수정합니다.' },
             {
               v: 'danger-full-access',
-              label: '제한 없음',
+              label: 'danger-full-access',
               hint: '샌드박스를 끕니다. 컴퓨터 전체와 네트워크에 접근할 수 있습니다.',
               risky: true
             }
@@ -195,9 +195,9 @@
           kind: 'choice',
           defaultText: 'cached',
           choices: [
-            { v: 'cached', label: '캐시 결과만', hint: '미리 수집된 검색 결과만 사용합니다.' },
-            { v: 'live', label: '실시간 검색', hint: '실제 웹을 바로 검색합니다. 최신 정보를 얻을 수 있습니다.' },
-            { v: 'disabled', label: '사용 안 함', hint: '웹 검색 도구를 끕니다.' }
+            { v: 'cached', label: 'cached', hint: '미리 수집된 검색 결과만 사용합니다.' },
+            { v: 'live', label: 'live', hint: '실제 웹을 바로 검색합니다. 최신 정보를 얻을 수 있습니다.' },
+            { v: 'disabled', label: 'disabled', hint: '웹 검색 도구를 끕니다.' }
           ]
         },
         {
@@ -207,9 +207,9 @@
           kind: 'choice',
           defaultText: 'all',
           choices: [
-            { v: 'all', label: '전부', hint: '내 셸의 환경 변수를 모두 넘깁니다. 비밀 값도 포함될 수 있습니다.' },
-            { v: 'core', label: '필수만', hint: 'PATH, HOME 같은 기본 변수만 넘깁니다.' },
-            { v: 'none', label: '없음', hint: '환경 변수를 넘기지 않습니다. 일부 명령이 동작하지 않을 수 있습니다.' }
+            { v: 'all', label: 'all', hint: '내 셸의 환경 변수를 모두 넘깁니다. 비밀 값도 포함될 수 있습니다.' },
+            { v: 'core', label: 'core', hint: 'PATH, HOME 같은 기본 변수만 넘깁니다.' },
+            { v: 'none', label: 'none', hint: '환경 변수를 넘기지 않습니다. 일부 명령이 동작하지 않을 수 있습니다.' }
           ]
         }
       ]
@@ -229,7 +229,7 @@
             { v: 'vscode-insiders', label: 'VS Code Insiders' },
             { v: 'cursor', label: 'Cursor' },
             { v: 'windsurf', label: 'Windsurf' },
-            { v: 'none', label: '링크 안 만듦', hint: '파일 경로를 일반 글자로 보여줍니다.' }
+            { v: 'none', label: 'none', hint: '파일 경로를 일반 글자로 보여줍니다.' }
           ]
         },
         bool('hide_agent_reasoning', '생각 과정 숨기기', '모델이 생각하는 중간 과정을 화면에 표시하지 않습니다.', '끔'),
@@ -253,8 +253,8 @@
           kind: 'choice',
           defaultText: 'save-all',
           choices: [
-            { v: 'save-all', label: '저장', hint: '이전 입력을 다시 불러올 수 있습니다.' },
-            { v: 'none', label: '저장 안 함', hint: '기록 파일에 아무것도 남기지 않습니다.' }
+            { v: 'save-all', label: 'save-all', hint: '이전 입력을 다시 불러올 수 있습니다.' },
+            { v: 'none', label: 'none', hint: '기록 파일에 아무것도 남기지 않습니다.' }
           ]
         },
         {
@@ -348,7 +348,7 @@
           placeholder: '테마 이름 직접 입력',
           choices: [
             { v: 'opencode', label: 'opencode' },
-            { v: 'system', label: '터미널 색 따르기' },
+            { v: 'system', label: 'system', hint: '터미널 색을 따릅니다.' },
             { v: 'tokyonight', label: 'Tokyo Night' },
             { v: 'catppuccin', label: 'Catppuccin' },
             { v: 'gruvbox', label: 'Gruvbox' },
@@ -367,9 +367,9 @@
           kind: 'choice',
           defaultText: 'manual',
           choices: [
-            { v: 'manual', label: '직접 할 때만', hint: '/share 명령을 쓸 때만 공유합니다.' },
-            { v: 'auto', label: '자동 공유', hint: '새 대화를 모두 자동으로 업로드합니다.', risky: true },
-            { v: 'disabled', label: '공유 금지', hint: '공유 기능을 완전히 끕니다.' }
+            { v: 'manual', label: 'manual', hint: '/share 명령을 쓸 때만 공유합니다.' },
+            { v: 'auto', label: 'auto', hint: '새 대화를 모두 자동으로 업로드합니다.', risky: true },
+            { v: 'disabled', label: 'disabled', hint: '공유 기능을 완전히 끕니다.' }
           ]
         },
         {
@@ -377,11 +377,11 @@
           label: '자동 업데이트',
           help: '새 버전이 나왔을 때 어떻게 할지 정합니다.',
           kind: 'choice',
-          defaultText: '자동 설치',
+          defaultText: 'true',
           choices: [
-            { v: true, label: '자동 설치', hint: '시작할 때 새 버전을 내려받아 설치합니다.' },
-            { v: 'notify', label: '알림만', hint: '새 버전이 있다고 알려주기만 합니다.' },
-            { v: false, label: '끔', hint: '업데이트를 확인하지 않습니다.' }
+            { v: true, label: 'true', hint: '시작할 때 새 버전을 내려받아 설치합니다.' },
+            { v: 'notify', label: 'notify', hint: '새 버전이 있다고 알려주기만 합니다.' },
+            { v: false, label: 'false', hint: '업데이트를 확인하지 않습니다.' }
           ]
         },
         bool(

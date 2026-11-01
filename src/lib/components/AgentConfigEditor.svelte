@@ -114,7 +114,7 @@
 <div class="panel">
   <div class="bar">
     <div class="segmented" role="tablist" aria-label="편집 보기">
-      <button role="tab" aria-selected={view === 'form'} onclick={() => (view = 'form')}>설정</button>
+      <button role="tab" aria-selected={view === 'form'} onclick={() => (view = 'form')}>일반 설정</button>
       <button role="tab" aria-selected={view === 'raw'} onclick={() => (view = 'raw')}>
         Raw {agent.format.toUpperCase()}
       </button>

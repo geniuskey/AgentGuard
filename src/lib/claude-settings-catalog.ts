@@ -6,11 +6,11 @@
 import type { Choice, FieldGroup, FieldSpec } from '$lib/setting-field';
 
 const MODEL_CHOICES: Choice[] = [
-  { v: 'opus', label: 'Opus', hint: '가장 똑똑한 최신 Opus — 어려운 작업용' },
-  { v: 'sonnet', label: 'Sonnet', hint: '속도와 품질의 균형 — 대부분의 작업에 적합' },
-  { v: 'haiku', label: 'Haiku', hint: '가장 빠르고 저렴 — 간단한 작업용' },
-  { v: 'opusplan', label: 'Opus 계획 + Sonnet 실행', hint: '계획은 Opus, 실제 작업은 Sonnet이 수행' },
-  { v: 'sonnet[1m]', label: 'Sonnet 1M 컨텍스트', hint: '아주 큰 코드베이스용 100만 토큰 컨텍스트' }
+  { v: 'opus', label: 'opus', hint: '가장 똑똑한 최신 Opus — 어려운 작업용' },
+  { v: 'sonnet', label: 'sonnet', hint: '속도와 품질의 균형 — 대부분의 작업에 적합' },
+  { v: 'haiku', label: 'haiku', hint: '가장 빠르고 저렴 — 간단한 작업용' },
+  { v: 'opusplan', label: 'opusplan', hint: '계획은 Opus, 실제 작업은 Sonnet이 수행' },
+  { v: 'sonnet[1m]', label: 'sonnet[1m]', hint: '아주 큰 코드베이스용 1M 토큰 컨텍스트' }
 ];
 
 const FULL_MODEL_CHOICES: Choice[] = [
@@ -29,28 +29,29 @@ export const CLAUDE_GROUPS: FieldGroup[] = [
     fields: [
       {
         key: 'model',
-        label: '사용할 모델',
+        label: '모델 (/model)',
         kind: 'combo',
         choices: MODEL_CHOICES,
         defaultText: '계정 기본',
         placeholder: '다른 모델 ID 직접 입력 (예: claude-opus-5-5)',
-        help: '/model 명령으로 세션 중에도 바꿀 수 있습니다'
+        help: '세션 중에는 /model 로 바꿀 수 있습니다'
       },
       {
         key: 'effortLevel',
-        label: '생각하는 깊이',
+        label: 'Effort (/effort)',
         kind: 'choice',
         choices: [
-          { v: 'low', label: '가볍게', hint: '빠른 응답, 간단한 질문용' },
-          { v: 'medium', label: '보통', hint: '대부분의 작업에 적합' },
-          { v: 'high', label: '깊게', hint: '복잡한 문제를 더 오래 고민합니다' },
-          { v: 'xhigh', label: '최대', hint: '가장 깊게 생각 — 느리고 사용량이 많습니다' }
+          { v: 'low', label: 'low', hint: '빠른 응답, 간단한 질문용' },
+          { v: 'medium', label: 'medium', hint: '대부분의 작업에 적합' },
+          { v: 'high', label: 'high', hint: '복잡한 문제를 더 오래 고민합니다' },
+          { v: 'xhigh', label: 'xhigh', hint: '가장 깊게 생각 — 느리고 사용량이 많습니다' }
         ],
-        defaultText: '모델 기본'
+        defaultText: '모델 기본',
+        help: '응답 전에 얼마나 깊이 생각할지 정합니다'
       },
       {
         key: 'alwaysThinkingEnabled',
-        label: '항상 깊게 생각하기',
+        label: '항상 thinking 사용',
         kind: 'toggle',
         defaultText: '끔',
         help: '모든 응답 전에 확장 사고(thinking)를 사용합니다'
@@ -70,13 +71,13 @@ export const CLAUDE_GROUPS: FieldGroup[] = [
       },
       {
         key: 'outputStyle',
-        label: '답변 스타일',
+        label: 'Output style (/output-style)',
         kind: 'combo',
         choices: [
-          { v: 'Explanatory', label: '설명형', hint: '작업하면서 이유와 배경을 함께 설명합니다' },
-          { v: 'Learning', label: '학습형', hint: '일부 코드를 직접 작성하도록 안내합니다' }
+          { v: 'Explanatory', label: 'Explanatory', hint: '작업하면서 이유와 배경을 함께 설명합니다' },
+          { v: 'Learning', label: 'Learning', hint: '일부 코드를 직접 작성하도록 안내합니다' }
         ],
-        defaultText: '기본 (간결한 작업 위주)',
+        defaultText: 'Default (간결한 작업 위주)',
         placeholder: '/output-style 로 만든 스타일 이름'
       }
     ]
@@ -87,21 +88,21 @@ export const CLAUDE_GROUPS: FieldGroup[] = [
     fields: [
       {
         key: 'autoCompactEnabled',
-        label: '긴 대화 자동 요약',
+        label: '자동 compact',
         kind: 'toggle',
         defaultText: '켬',
-        help: '대화가 길어지면 앞부분을 요약해 계속 이어갑니다'
+        help: '대화가 길어지면 앞부분을 요약해 계속 이어갑니다 (수동: /compact)'
       },
       {
         key: 'autoMemoryEnabled',
-        label: '자동 메모리',
+        label: 'Auto memory (/memory)',
         kind: 'toggle',
         defaultText: '켬',
         help: '프로젝트에서 배운 내용을 다음 세션에도 기억합니다'
       },
       {
         key: 'fileCheckpointingEnabled',
-        label: '파일 변경 되돌리기 (/rewind)',
+        label: '파일 checkpoint (/rewind)',
         kind: 'toggle',
         defaultText: '켬',
         help: 'Claude가 바꾼 파일을 이전 시점으로 되돌릴 수 있게 저장합니다'
@@ -138,10 +139,10 @@ export const CLAUDE_GROUPS: FieldGroup[] = [
         label: '업데이트 채널',
         kind: 'choice',
         choices: [
-          { v: 'stable', label: '안정판', hint: '검증을 거친 버전만 받습니다' },
-          { v: 'latest', label: '최신판', hint: '새 기능을 가장 먼저 받습니다' }
+          { v: 'stable', label: 'stable', hint: '검증을 거친 버전만 받습니다' },
+          { v: 'latest', label: 'latest', hint: '새 기능을 가장 먼저 받습니다' }
         ],
-        defaultText: '최신판'
+        defaultText: 'latest'
       }
     ]
   },
@@ -170,7 +171,7 @@ export const CLAUDE_GROUPS: FieldGroup[] = [
     fields: [
       {
         key: 'permissions.disableBypassPermissionsMode',
-        label: '"모든 확인 건너뛰기" 모드 막기',
+        label: 'bypassPermissions 모드 막기',
         kind: 'toggle',
         on: 'disable',
         off: null,
@@ -190,8 +191,8 @@ export const CLAUDE_GROUPS: FieldGroup[] = [
         label: '로그인 방식 고정',
         kind: 'choice',
         choices: [
-          { v: 'claudeai', label: 'Claude 구독', hint: 'Pro/Max 등 Claude.ai 계정으로만 로그인' },
-          { v: 'console', label: 'API 콘솔', hint: 'Anthropic Console(API 과금) 계정으로만 로그인' }
+          { v: 'claudeai', label: 'claudeai', hint: 'Pro/Max 등 Claude.ai 구독 계정으로만 로그인' },
+          { v: 'console', label: 'console', hint: 'Anthropic Console(API 과금) 계정으로만 로그인' }
         ],
         defaultText: '선택 가능'
       }
@@ -340,17 +341,17 @@ export const ENV_GROUPS: EnvGroup[] = [
   },
   {
     id: 'limits',
-    title: '생각·출력 한도',
+    title: 'Thinking · 출력 한도',
     fields: [
       {
         key: 'MAX_THINKING_TOKENS',
-        label: '생각 토큰 예산',
+        label: 'Thinking 토큰 예산',
         kind: 'choice',
         choices: [
-          { v: '0', label: '끄기 (0)', hint: '확장 사고를 사용하지 않습니다' },
-          { v: '4000', label: '짧게 (4,000)' },
-          { v: '16000', label: '보통 (16,000)' },
-          { v: '31999', label: '길게 (31,999)', hint: '복잡한 설계·디버깅에 유리하지만 느려집니다' }
+          { v: '0', label: '0', hint: 'thinking을 사용하지 않습니다' },
+          { v: '4000', label: '4000' },
+          { v: '16000', label: '16000' },
+          { v: '31999', label: '31999', hint: '복잡한 설계·디버깅에 유리하지만 느려집니다' }
         ],
         defaultText: '모델 기본',
         help: '한 번의 응답에서 생각에 쓸 수 있는 최대 토큰'
@@ -511,11 +512,11 @@ export const ENV_GROUPS: EnvGroup[] = [
         label: '신뢰할 인증서 저장소',
         kind: 'choice',
         choices: [
-          { v: 'bundled,system', label: '내장 + Windows 저장소' },
-          { v: 'system', label: 'Windows 저장소만', hint: '회사가 배포한 루트 인증서만 신뢰합니다' },
-          { v: 'bundled', label: '내장 목록만', hint: 'Windows에 설치된 인증서를 무시합니다' }
+          { v: 'bundled,system', label: 'bundled,system', hint: '내장 목록 + OS 인증서 저장소' },
+          { v: 'system', label: 'system', hint: 'OS 저장소만 — 회사가 배포한 루트 인증서만 신뢰합니다' },
+          { v: 'bundled', label: 'bundled', hint: '내장 목록만 — OS에 설치된 인증서를 무시합니다' }
         ],
-        defaultText: '내장 + Windows 저장소'
+        defaultText: 'bundled,system'
       },
       {
         key: 'CLAUDE_CODE_CLIENT_CERT',

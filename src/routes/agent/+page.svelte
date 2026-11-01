@@ -42,7 +42,7 @@
   </div>
 
   {#if agent}
-    <p class="tagline">{agent.description} · 전역 설정. 저장 시 자동으로 백업됩니다.</p>
+    <p class="tagline">{agent.description} · 전역 설정. 모든 프로젝트에 적용되며, 저장 시 자동으로 백업됩니다.</p>
   {/if}
 
   {#if !inTauri()}
